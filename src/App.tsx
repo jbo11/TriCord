@@ -113,6 +113,7 @@ const THREAD_WIDTH_STORAGE_KEY = 'tricord_thread_width';
 const THEME_STORAGE_KEY = 'tricord_theme';
 const CHAT_OPEN_STORAGE_KEY = 'tricord_chat_open';
 const ACCENT_STORAGE_KEY = 'tricord_accent';
+const WORKSPACE_STORAGE_KEY = 'tricord_workspace_id';
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
 type AccentColor = 'tangerine' | 'violet' | 'blue' | 'teal' | 'rose';
@@ -166,6 +167,7 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
+  const [hubModalOpen, setHubModalOpen] = useState(false);
   const [renamingSpace, setRenamingSpace] = useState<AppSpace | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<AccountModalView | null>(null);
@@ -395,13 +397,15 @@ export default function App() {
       role: roleByWorkspace.get(workspace.id) ?? 'member',
     }));
 
-    const desiredWorkspaceId = preferredWorkspaceId ?? workspaceId;
+    const storedWorkspaceId = window.localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? '';
+    const desiredWorkspaceId = preferredWorkspaceId ?? storedWorkspaceId ?? workspaceId;
     const nextWorkspaceId = desiredWorkspaceId && nextWorkspaces.some((workspace) => workspace.id === desiredWorkspaceId)
       ? desiredWorkspaceId
       : nextWorkspaces[0]?.id ?? '';
 
     setWorkspaces(nextWorkspaces);
     setWorkspaceId(nextWorkspaceId);
+    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, nextWorkspaceId);
     if (nextWorkspaceId) await loadWorkspaceData(nextWorkspaceId);
   }, [loadWorkspaceData, workspaceId]);
 
@@ -734,6 +738,15 @@ export default function App() {
             }
           }}
           onOpenAccount={setAccountModal}
+          onSelectWorkspace={async (nextWorkspaceId) => {
+            if (nextWorkspaceId === workspaceId) return;
+            setSelectedPostId('');
+            setActiveSpaceId('all');
+            setWorkspaceId(nextWorkspaceId);
+            window.localStorage.setItem(WORKSPACE_STORAGE_KEY, nextWorkspaceId);
+            await loadWorkspaceData(nextWorkspaceId);
+          }}
+          onCreateHub={() => setHubModalOpen(true)}
           onSignOut={() => void supabase?.auth.signOut()}
           canManageAdmin={canManageAdmin}
         />
@@ -1140,6 +1153,19 @@ export default function App() {
           }}
         />
       )}
+
+      {hubModalOpen && (
+        <HubSetupModal
+          theme={theme}
+          email={session.user.email ?? ''}
+          onClose={() => setHubModalOpen(false)}
+          onCreate={async (setup) => {
+            const newWorkspaceId = await createWorkspace(session, setup);
+            setHubModalOpen(false);
+            await loadMemberships(session.user.id, newWorkspaceId);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1190,6 +1216,8 @@ function Sidebar({
   onSetRoomPinned,
   onDeleteSpace,
   onOpenAccount,
+  onSelectWorkspace,
+  onCreateHub,
   onSignOut,
   canManageAdmin,
 }: {
@@ -1213,6 +1241,8 @@ function Sidebar({
   onSetRoomPinned: (space: AppSpace, pinned: boolean) => Promise<void>;
   onDeleteSpace: (space: AppSpace) => Promise<void>;
   onOpenAccount: (view: AccountModalView) => void;
+  onSelectWorkspace: (workspaceId: string) => Promise<void>;
+  onCreateHub: () => void;
   onSignOut: () => void;
   canManageAdmin: boolean;
 }) {
@@ -1427,6 +1457,27 @@ function Sidebar({
                 </div>
               </div>
               <div className="mt-2 grid gap-1">
+                <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#AAA4B3]">Hubs</p>
+                {workspaces.map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    type="button"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      void onSelectWorkspace(workspace.id);
+                    }}
+                    className={cn('flex min-h-10 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-white/10', workspace.id === workspaceId && 'bg-white/10')}
+                  >
+                    <Globe2 className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{workspace.name}</span>
+                      <span className="block text-xs capitalize text-[#AAA4B3]">{getRoleLabel(workspace.role ?? 'member')}</span>
+                    </span>
+                    {workspace.id === workspaceId && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent)]" aria-label="Current Hub" />}
+                  </button>
+                ))}
+                <AccountMenuButton icon={Plus} label="Create Hub" onClick={() => { setAccountMenuOpen(false); onCreateHub(); }} />
+                <div className="my-1 border-t border-white/10" />
                 <div className="relative">
                   <AccountMenuButton icon={Settings} label="Settings" rooming={ChevronRight} active={settingsMenuOpen} onClick={() => { setSettingsMenuOpen((open) => !open); setHelpMenuOpen(false); }} />
                   {settingsMenuOpen && (
@@ -3389,6 +3440,59 @@ function OnboardingScreen({
   );
 }
 
+function HubSetupModal({ theme, email, onCreate, onClose }: { theme: 'light' | 'dark'; email: string; onCreate: (setup: HubSetup) => Promise<void>; onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [countryCode, setCountryCode] = useState('US');
+  const [currencyCode, setCurrencyCode] = useState('USD');
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [dateFormat, setDateFormat] = useState('MM/DD/YYYY');
+  const [payrollFrequency, setPayrollFrequency] = useState('biweekly');
+  const [firstDayOfWeek, setFirstDayOfWeek] = useState(0);
+
+  return (
+    <ModalShell title="Create a new Hub" theme={theme} onClose={onClose} wide>
+      <form
+        className="grid gap-4"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!name.trim()) return;
+          setSubmitting(true);
+          setError('');
+          try {
+            await onCreate({ name: name.trim(), countryCode, currencyCode, locale: navigator.language || 'en-US', timezone, dateFormat, payrollFrequency, firstDayOfWeek });
+          } catch (caughtError) {
+            setError(getErrorMessage(caughtError));
+            setSubmitting(false);
+          }
+        }}
+      >
+        <div className={cn('rounded-lg border px-4 py-3 text-sm leading-6', surface(theme))}>
+          This creates a separate Hub owned by <strong>{email}</strong>. Your roles and access in existing Hubs will not change.
+        </div>
+        <label className="text-sm font-semibold">
+          Hub name
+          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="New Hub name" className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-semibold">Country<select value={countryCode} onChange={(event) => { const country = event.target.value; setCountryCode(country); const defaults: Record<string, [string, string]> = { US: ['USD', 'MM/DD/YYYY'], PH: ['PHP', 'MM/DD/YYYY'], CA: ['CAD', 'YYYY-MM-DD'], AU: ['AUD', 'DD/MM/YYYY'], GB: ['GBP', 'DD/MM/YYYY'] }; const next = defaults[country]; if (next) { setCurrencyCode(next[0]); setDateFormat(next[1]); } }} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="US">United States</option><option value="PH">Philippines</option><option value="CA">Canada</option><option value="AU">Australia</option><option value="GB">United Kingdom</option><option value="OTHER">Other</option></select></label>
+          <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
+          <label className="text-xs font-semibold sm:col-span-2">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
+          <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
+          <label className="text-xs font-semibold">Payroll frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+          <label className="text-xs font-semibold sm:col-span-2">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
+        </div>
+        {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Cancel</button>
+          <button disabled={submitting || !name.trim()} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:opacity-50">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}Create Hub</button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
 function SetupScreen({ theme, setTheme }: { theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void }) {
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
@@ -3604,8 +3708,8 @@ async function ensureProfile(session: Session) {
   });
 }
 
-async function createWorkspace(session: Session, setup: HubSetup) {
-  if (!supabase) return;
+async function createWorkspace(session: Session, setup: HubSetup): Promise<string> {
+  if (!supabase) throw new Error('Supabase is not configured.');
   const email = session.user.email ?? '';
   const displayName = session.user.user_metadata?.full_name ?? email.split('@')[0] ?? 'Member';
   const { data, error } = await supabase.rpc('create_initial_workspace', {
@@ -3617,8 +3721,9 @@ async function createWorkspace(session: Session, setup: HubSetup) {
   });
 
   if (!error) {
-    await saveInitialWorkforceSettings(String(data), setup);
-    return;
+    const workspaceId = String(data);
+    await saveInitialWorkforceSettings(workspaceId, setup);
+    return workspaceId;
   }
 
   const missingRpc = error.code === 'PGRST202' || error.message.toLowerCase().includes('schema cache');
@@ -3626,6 +3731,7 @@ async function createWorkspace(session: Session, setup: HubSetup) {
 
   const workspaceId = await createWorkspaceWithTableInserts(session, setup.name);
   await saveInitialWorkforceSettings(workspaceId, setup);
+  return workspaceId;
 }
 
 async function createWorkspaceWithTableInserts(session: Session, workspaceName: string) {

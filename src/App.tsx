@@ -937,6 +937,7 @@ export default function App() {
               {view === 'admin' && canManageAdmin && (
                 <AdminView
                   workspace={selectedWorkspace}
+                  currentRole={currentRole}
                   theme={theme}
                   memberships={memberships}
                   profiles={profiles}
@@ -1171,11 +1172,12 @@ export default function App() {
 }
 
 function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
+  const gridLine = theme === 'dark' ? 'rgba(255,255,255,0.035)' : 'rgba(39,34,47,0.035)';
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className={cn('absolute inset-0', theme === 'dark' ? 'opacity-20' : 'opacity-70')} style={{
+      <div className="absolute inset-0 opacity-70" style={{
         backgroundImage:
-          'linear-gradient(90deg, rgba(39,34,47,0.035) 1px, transparent 1px), linear-gradient(rgba(39,34,47,0.035) 1px, transparent 1px), radial-gradient(circle at 78% 8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 22rem)',
+          'linear-gradient(90deg, ' + gridLine + ' 1px, transparent 1px), linear-gradient(' + gridLine + ' 1px, transparent 1px), radial-gradient(circle at 78% 8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 22rem)',
         backgroundSize: '36px 36px, 36px 36px, auto',
       }} />
     </div>
@@ -1256,6 +1258,7 @@ function Sidebar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
   const [draggedRoomId, setDraggedRoomId] = useState('');
+  const [workforceNavOpen, setWorkforceNavOpen] = useState(true);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
@@ -1357,12 +1360,14 @@ function Sidebar({
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
           <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />
-          {currentRole !== 'guest' && <div className={cn('my-3 border-t', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')} />}
-          {currentRole !== 'guest' && <NavButton icon={Clock3} label="Timekeeping" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
-          {currentRole !== 'guest' && <NavButton icon={BriefcaseBusiness} label="HR" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
-          {currentRole !== 'guest' && <NavButton icon={Banknote} label="Payroll" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
-          {canManageAdmin && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
-          {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
+          {currentRole !== 'guest' && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Workforce</span><button type="button" aria-label={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} title={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
+          {currentRole !== 'guest' && workforceNavOpen && <>
+            <NavButton icon={Clock3} label="Timekeeping" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />
+            <NavButton icon={BriefcaseBusiness} label="HR" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />
+            <NavButton icon={Banknote} label="Payroll" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />
+            {canManageAdmin && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
+            {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
+          </>}
         </nav>
 
         <section className="mt-7 min-h-0 overflow-visible">
@@ -2542,6 +2547,7 @@ function KnowledgeView({
 
 function AdminView({
   workspace,
+  currentRole,
   theme,
   memberships,
   profiles,
@@ -2549,6 +2555,7 @@ function AdminView({
   onRoleChange,
 }: {
   workspace?: AppWorkspace;
+  currentRole: WorkspaceRole;
   theme: 'light' | 'dark';
   memberships: AppMembership[];
   profiles: Record<string, AppProfile>;
@@ -2557,11 +2564,31 @@ function AdminView({
 }) {
   const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false);
   const [roleError, setRoleError] = useState('');
+  const [attendancePermissions, setAttendancePermissions] = useState<Record<string, boolean>>({});
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
     { title: 'Admins', roles: ['owner', 'admin'] },
     { title: 'Members', roles: ['member'] },
     { title: 'Guests', roles: ['guest'] },
   ];
+
+  useEffect(() => {
+    if (!supabase || !workspace?.id) return;
+    void supabase.from('workforce_permissions').select('user_id, manage_time_entries').eq('workspace_id', workspace.id).then(({ data, error }) => {
+      if (error) { setRoleError(error.message); return; }
+      setAttendancePermissions(Object.fromEntries((data ?? []).map((permission) => [String(permission.user_id), Boolean(permission.manage_time_entries)])));
+    });
+  }, [workspace?.id]);
+
+  const setAttendancePermission = async (targetUserId: string, enabled: boolean) => {
+    if (!supabase || !workspace?.id || currentRole !== 'owner') return;
+    setRoleError('');
+    const { error } = await supabase.from('workforce_permissions').upsert({
+      workspace_id: workspace.id, user_id: targetUserId, manage_time_entries: enabled,
+      granted_by: workspace.owner_id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'workspace_id,user_id' });
+    if (error) setRoleError(error.message);
+    else setAttendancePermissions((current) => ({ ...current, [targetUserId]: enabled }));
+  };
 
   return (
     <StaticPanel theme={theme} title="Admin" icon={ShieldCheck}>
@@ -2582,6 +2609,7 @@ function AdminView({
             <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
+                <div><p className="text-sm font-semibold">Attendance management</p><p className={cn('text-xs leading-5', muted(theme))}>Only Owners can edit or delete time entries by default. Owners may grant this permission to individual Admins.</p></div>
               </div>
             </div>
           )}
@@ -2607,6 +2635,7 @@ function AdminView({
                           <span className="min-w-0 truncate text-sm font-semibold">{getProfileFullName(member)}</span>
                           <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.email ?? 'No email'}</span>
                           <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.phone || 'No contact number'}</span>
+                          <div className="grid gap-2">
                           <select
                             value={membership.role}
                             disabled={membership.role === 'owner'}
@@ -2623,6 +2652,8 @@ function AdminView({
                             <option value="member">Member</option>
                             <option value="guest">Guest</option>
                           </select>
+                          {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage attendance</span><input type="checkbox" checked={Boolean(attendancePermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setAttendancePermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
+                          </div>
                         </div>
                       );
                     })}

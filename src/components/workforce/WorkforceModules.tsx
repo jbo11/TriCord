@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, Clock3, Coffee, FileUp,
-  Gauge, MapPin, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Users,
+  Gauge, Pause, Play, Plus, RefreshCw, Search, Square, Users,
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -43,6 +43,17 @@ interface TimekeepingSettings {
   workday_start: string; workday_end: string; workdays: number[];
 }
 
+interface EmployeeTimekeepingPolicy extends TimekeepingSettings {
+  employee_profile_id: string;
+  enabled: boolean;
+}
+
+interface EmployeePayrollField {
+  id: string; workspace_id: string; employee_profile_id: string; name: string;
+  item_kind: 'earning' | 'deduction'; calculation_type: 'fixed' | 'percentage';
+  value: number; country_code: string | null; active: boolean;
+}
+
 interface WorkforceSettings {
   workspace_id: string; country_code: string; currency_code: string; locale: string; timezone: string;
   date_format: string; payroll_frequency: string; first_day_of_week: number;
@@ -67,30 +78,51 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
   const [employee, setEmployee] = useState<EmployeeProfile | null>(null);
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
-  const [settings, setSettings] = useState<TimekeepingSettings | null>(null);
+  const [policies, setPolicies] = useState<EmployeeTimekeepingPolicy[]>([]);
+  const [selectedPolicyEmployeeId, setSelectedPolicyEmployeeId] = useState('');
+  const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
+  const [adminCanManageEntries, setAdminCanManageEntries] = useState(false);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
   const selfieRef = useRef<HTMLInputElement | null>(null);
   const canConfigure = role === 'owner';
+  const canClock = role === 'admin' || role === 'member';
+  const canManageEntries = role === 'owner' || (role === 'admin' && adminCanManageEntries);
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [employeeResult, employeesResult, entriesResult, settingsResult] = await Promise.all([
+    const [employeeResult, employeesResult, entriesResult, policiesResult, permissionResult] = await Promise.all([
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId),
       supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).order('clock_in', { ascending: false }).limit(50),
-      supabase.from('timekeeping_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(),
+      supabase.from('employee_timekeeping_policies').select('*').eq('workspace_id', workspaceId),
+      supabase.from('workforce_permissions').select('manage_time_entries').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
     ]);
-    if (employeeResult.error || employeesResult.error || entriesResult.error || settingsResult.error) {
-      onNotice(employeeResult.error?.message ?? employeesResult.error?.message ?? entriesResult.error?.message ?? settingsResult.error?.message ?? 'Timekeeping could not be loaded.');
+    if (employeeResult.error || employeesResult.error || entriesResult.error || policiesResult.error || permissionResult.error) {
+      onNotice(employeeResult.error?.message ?? employeesResult.error?.message ?? entriesResult.error?.message ?? policiesResult.error?.message ?? permissionResult.error?.message ?? 'Timekeeping could not be loaded.');
       return;
     }
-    setEmployee(employeeResult.data as EmployeeProfile | null);
-    setEmployees((employeesResult.data ?? []) as EmployeeProfile[]);
+    const ownEmployee = employeeResult.data as EmployeeProfile | null;
+    const nextEmployees = (employeesResult.data ?? []) as EmployeeProfile[];
+    const nextPolicies = (policiesResult.data ?? []) as EmployeeTimekeepingPolicy[];
+    setEmployee(ownEmployee);
+    setEmployees(nextEmployees);
     setEntries((entriesResult.data ?? []) as TimeEntry[]);
-    setSettings(settingsResult.data as TimekeepingSettings | null);
+    setPolicies(nextPolicies);
+    setAdminCanManageEntries(Boolean(permissionResult.data?.manage_time_entries));
+    if (role === 'owner') {
+      setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
+    } else {
+      setSettings(nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null);
+    }
   }, [onNotice, userId, workspaceId]);
+
+  useEffect(() => {
+    if (role !== 'owner') return;
+    const selected = policies.find((policy) => policy.employee_profile_id === selectedPolicyEmployeeId);
+    setSettings(selected ? { ...selected } : null);
+  }, [policies, role, selectedPolicyEmployeeId]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
@@ -143,75 +175,81 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
   };
 
   const saveSettings = async () => {
-    if (!supabase || !settings) return;
+    if (!supabase || !settings || role !== 'owner') return;
     setSaving(true);
-    const { error } = await supabase.from('timekeeping_settings').update({
+    const { error } = await supabase.from('employee_timekeeping_policies').update({
+      enabled: settings.enabled,
       capture_location: settings.capture_location, capture_ip: settings.capture_ip,
       capture_device: settings.capture_device, require_selfie: settings.require_selfie,
       enforce_geofence: settings.enforce_geofence, office_latitude: settings.office_latitude,
       office_longitude: settings.office_longitude, geofence_radius_meters: settings.geofence_radius_meters,
       standard_daily_hours: settings.standard_daily_hours, grace_period_minutes: settings.grace_period_minutes,
       workday_start: settings.workday_start, workday_end: settings.workday_end, workdays: settings.workdays,
-      updated_at: new Date().toISOString(),
-    }).eq('workspace_id', workspaceId);
+      updated_at: new Date().toISOString(), updated_by: userId,
+    }).eq('employee_profile_id', settings.employee_profile_id);
     setSaving(false);
-    if (error) onNotice(error.message); else onNotice('Timekeeping settings saved.');
+    if (error) onNotice(error.message); else { onNotice('Employee timekeeping policy saved.'); await load(); }
   };
   const adjustEntry = async (entry: TimeEntry) => {
-    if (!supabase || (role !== 'owner' && role !== 'admin')) return;
+    if (!supabase || !canManageEntries) return;
     const clockIn = window.prompt('Clock in (ISO date/time)', entry.clock_in); if (!clockIn) return;
     const clockOut = window.prompt('Clock out (ISO date/time, blank if active)', entry.clock_out ?? '');
     const { error } = await supabase.from('time_entries').update({ clock_in: new Date(clockIn).toISOString(), clock_out: clockOut ? new Date(clockOut).toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entry.id);
     if (error) onNotice(error.message); else { onNotice('Attendance entry updated.'); await load(); }
   };
+  const deleteEntry = async (entry: TimeEntry) => {
+    if (!supabase || !canManageEntries || !window.confirm('Delete this attendance entry?')) return;
+    const { error } = await supabase.from('time_entries').delete().eq('id', entry.id);
+    if (error) onNotice(error.message); else { onNotice('Attendance entry deleted.'); await load(); }
+  };
 
   return (
     <ModuleFrame icon={Clock3} title="Timekeeping" subtitle="Attendance and working hours" theme={theme}>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className={cn('grid gap-4', canConfigure && 'lg:grid-cols-[minmax(0,1fr)_380px]')}>
         <div className="space-y-4">
-          <div className={cn('border-b pb-6', border(theme))}>
+          {canClock && <div className={cn('border-b pb-6', border(theme))}>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Metric label="Current status" value={status} accent theme={theme} />
               <Metric label="Clock in" value={active ? formatTime(active.clock_in) : '—'} theme={theme} />
               <Metric label="Current duration" value={active ? formatDuration(workedHours(active, now)) : '0h 00m'} theme={theme} />
               <Metric label="Today’s total" value={formatDuration(todayHours)} theme={theme} />
             </div>
-          </div>
-          <div className={cn('flex flex-wrap items-center gap-3 border-b py-5', border(theme))}>
-            {!active && <ActionButton icon={Play} label="Clock in" onClick={() => void runAction('clock_in')} disabled={saving} />}
-            {active && !active.break_started_at && <ActionButton icon={Coffee} label="Start break" onClick={() => void runAction('break_start')} disabled={saving} secondary />}
-            {active?.break_started_at && <ActionButton icon={Play} label="Resume work" onClick={() => void runAction('break_end')} disabled={saving} />}
-            {active && <ActionButton icon={Square} label="Clock out" onClick={() => void runAction('clock_out')} disabled={saving} danger />}
+          </div>}
+          {canClock && <div className={cn('flex flex-wrap items-center gap-3 border-b py-5', border(theme))}>
+            {!settings?.enabled && <p className={cn('text-sm font-semibold', muted(theme))}>Timekeeping is disabled for your employee profile.</p>}
+            {!active && <ActionButton icon={Play} label="Clock in" onClick={() => void runAction('clock_in')} disabled={saving || !settings?.enabled} />}
+            {active && !active.break_started_at && <ActionButton icon={Coffee} label="Start break" onClick={() => void runAction('break_start')} disabled={saving || !settings?.enabled} secondary />}
+            {active?.break_started_at && <ActionButton icon={Play} label="Resume work" onClick={() => void runAction('break_end')} disabled={saving || !settings?.enabled} />}
+            {active && <ActionButton icon={Square} label="Clock out" onClick={() => void runAction('clock_out')} disabled={saving || !settings?.enabled} danger />}
             {settings?.require_selfie && !active && (
               <>
                 <input ref={selfieRef} className="hidden" type="file" accept="image/*" capture="user" onChange={(event) => setSelfie(event.target.files?.[0] ?? null)} />
                 <button onClick={() => selfieRef.current?.click()} className={cn('inline-flex h-11 items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><Camera className="h-4 w-4" />{selfie ? 'Selfie ready' : 'Add selfie'}</button>
               </>
             )}
-          </div>
-          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(role === 'owner' || role === 'admin' ? ['Actions'] : [])]} theme={theme}>
+          </div>}
+          {role === 'owner' && <div><h3 className="font-bold">Attendance records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Owners can correct or remove entries. Admins need an explicit attendance permission.</p></div>}
+          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(canManageEntries ? ['Actions'] : [])]} theme={theme}>
             {visibleEntries.map((entry) => <tr key={entry.id} className={cn('border-b last:border-0', border(theme))}>
-              {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{(role === 'owner' || role === 'admin') && <Cell><IconAction label="Adjust attendance" icon={Clock3} onClick={() => void adjustEntry(entry)} /></Cell>}
+              {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{canManageEntries && <Cell><div className="flex gap-2"><IconAction label="Adjust attendance" icon={Clock3} onClick={() => void adjustEntry(entry)} /><IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} /></div></Cell>}
             </tr>)}
           </DataTable>
         </div>
-        <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>
-          <h3 className="font-bold">Clock-in requirements</h3>
-          <div className="mt-3 space-y-2 text-sm">
-            <Requirement icon={MapPin} label="Location" enabled={Boolean(settings?.capture_location || settings?.enforce_geofence)} />
-            <Requirement icon={ShieldCheck} label="IP address" enabled={Boolean(settings?.capture_ip)} />
-            <Requirement icon={Gauge} label="Device information" enabled={Boolean(settings?.capture_device)} />
-            <Requirement icon={Camera} label="Selfie" enabled={Boolean(settings?.require_selfie)} />
-          </div>
-          {canConfigure && settings && <div className={cn('mt-5 border-t pt-4', border(theme))}>
-            <h3 className="mb-3 font-bold">Owner settings</h3>
+        {canConfigure && <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>
+          <h3 className="font-bold">Employee clock-in policy</h3>
+          <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Requirements are configured separately for each Admin or Member.</p>
+          <label className="mt-4 block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select value={selectedPolicyEmployeeId} onChange={(event) => setSelectedPolicyEmployeeId(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm font-semibold', panel(theme))}>{policies.map((policy) => <option key={policy.employee_profile_id} value={policy.employee_profile_id}>{employeeName(employees.find((item) => item.id === policy.employee_profile_id), profiles)}</option>)}</select></label>
+          {settings && <div className={cn('mt-4 border-t pt-4', border(theme))}>
+            <Toggle checked={settings.enabled} onChange={(checked) => setSettings({ ...settings, enabled: checked })} label="Enable timekeeping" />
+            <div className={cn('my-3 border-t', border(theme))} />
             {(['capture_location', 'capture_ip', 'capture_device', 'require_selfie', 'enforce_geofence'] as const).map((key) => <div key={key}><Toggle checked={settings[key]} onChange={(checked) => setSettings({ ...settings, [key]: checked })} label={settingLabel(key)} /></div>)}
             {settings.enforce_geofence && <div className="mt-3 grid grid-cols-2 gap-2"><SmallInput label="Latitude" value={settings.office_latitude ?? ''} onChange={(value) => setSettings({ ...settings, office_latitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Longitude" value={settings.office_longitude ?? ''} onChange={(value) => setSettings({ ...settings, office_longitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Radius (m)" value={settings.geofence_radius_meters} onChange={(value) => setSettings({ ...settings, geofence_radius_meters: Number(value) })} theme={theme} /></div>}
             <div className="mt-4 grid grid-cols-2 gap-2"><SmallInput label="Workday starts" value={settings.workday_start?.slice(0, 5) ?? '09:00'} onChange={(value) => setSettings({ ...settings, workday_start: value })} theme={theme} /><SmallInput label="Workday ends" value={settings.workday_end?.slice(0, 5) ?? '17:00'} onChange={(value) => setSettings({ ...settings, workday_end: value })} theme={theme} /><SmallInput label="Grace (minutes)" value={settings.grace_period_minutes} onChange={(value) => setSettings({ ...settings, grace_period_minutes: Number(value) })} theme={theme} /></div>
             <div className="mt-3 flex gap-1">{['S','M','T','W','T','F','S'].map((day, index) => <button key={`${day}-${index}`} type="button" title={['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][index]} onClick={() => setSettings({ ...settings, workdays: settings.workdays.includes(index) ? settings.workdays.filter((value) => value !== index) : [...settings.workdays, index].sort() })} className={cn('h-8 w-8 rounded-md text-xs font-bold', settings.workdays.includes(index) ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : buttonSurface(theme))}>{day}</button>)}</div>
             <button onClick={() => void saveSettings()} disabled={saving} className="mt-4 h-10 w-full rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save settings</button>
           </div>}
-        </aside>
+          {!settings && <p className={cn('mt-4 text-sm', muted(theme))}>No Admin or Member employee profiles are available.</p>}
+        </aside>}
       </div>
     </ModuleFrame>
   );
@@ -292,14 +330,14 @@ function HrPage({ workspaceId, userId, role, profiles, theme, onNotice }: Workfo
 
   return <ModuleFrame icon={BriefcaseBusiness} title="HR" subtitle={canManage ? 'People, leave, documents, and performance' : 'Your employment profile and leave'} theme={theme}>
     <Segmented options={[['people', canManage ? 'People' : 'Profile'], ['leave', 'Leave'], ['documents', 'Documents'], ['performance', 'Performance'], ...(canManage ? [['compensation', 'Compensation']] : [])]} value={tab} onChange={(value) => setTab(value as typeof tab)} theme={theme} />
-    {tab === 'people' && <div className="mt-5 grid min-h-0 gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+    {tab === 'people' && <div className={cn('mt-5 grid min-h-0 gap-5', canManage ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'max-w-4xl')}>
       {canManage && <div><label className={cn('flex h-10 items-center gap-2 rounded-lg border px-3', panel(theme))}><Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label><div className="mt-3 space-y-1">{filtered.map((employee) => <button key={employee.id} onClick={() => setSelectedId(employee.id)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left', selectedId === employee.id ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-[#F0EDF3]')}><MiniAvatar profile={profiles[employee.user_id]} /><span className="min-w-0"><strong className="block truncate text-sm">{employeeName(employee, profiles)}</strong><span className={cn('block truncate text-xs', muted(theme))}>{employee.position || employee.department || 'Employee'}</span></span></button>)}</div></div>}
       {editing && <div className={cn('rounded-lg border p-5', panel(theme))}><div className="mb-5 flex items-center gap-3"><MiniAvatar profile={profiles[editing.user_id]} large /><div><h3 className="text-lg font-bold">{employeeName(editing, profiles)}</h3><p className={cn('text-sm', muted(theme))}>{profiles[editing.user_id]?.email}</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="First name" value={editing.first_name ?? ''} onChange={(value) => setEditing({ ...editing, first_name: value })} theme={theme} /><Field label="Last name" value={editing.last_name ?? ''} onChange={(value) => setEditing({ ...editing, last_name: value })} theme={theme} /><Field label="Contact number" value={editing.contact_number ?? ''} onChange={(value) => setEditing({ ...editing, contact_number: value })} theme={theme} /><Field label="Birthday" type="date" value={editing.birthday ?? ''} onChange={(value) => setEditing({ ...editing, birthday: value || null })} theme={theme} /><Field label="Address" value={editing.address ?? ''} onChange={(value) => setEditing({ ...editing, address: value })} theme={theme} wide /><Field label="Emergency contact" value={editing.emergency_contact_name ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_name: value })} theme={theme} /><Field label="Emergency number" value={editing.emergency_contact_number ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_number: value })} theme={theme} />{canManage && <><Field label="Employee number" value={editing.employee_number ?? ''} onChange={(value) => setEditing({ ...editing, employee_number: value || null })} theme={theme} /><Field label="Department" value={editing.department ?? ''} onChange={(value) => setEditing({ ...editing, department: value || null })} theme={theme} /><Field label="Position" value={editing.position ?? ''} onChange={(value) => setEditing({ ...editing, position: value || null })} theme={theme} /><Field label="Hire date" type="date" value={editing.hire_date ?? ''} onChange={(value) => setEditing({ ...editing, hire_date: value || null })} theme={theme} /><SelectField label="Employment type" value={editing.employment_type ?? ''} options={['', 'full_time', 'part_time', 'contractor', 'temporary', 'intern']} onChange={(value) => setEditing({ ...editing, employment_type: value || null })} theme={theme} /><SelectField label="Status" value={editing.employment_status} options={['active', 'inactive', 'on_leave', 'terminated']} onChange={(value) => setEditing({ ...editing, employment_status: value })} theme={theme} /><label className="block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Manager</span><select value={editing.manager_user_id ?? ''} onChange={(event) => setEditing({ ...editing, manager_user_id: event.target.value || null })} className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="">Not assigned</option>{employees.filter((employee) => employee.id !== editing.id).map((employee) => <option key={employee.id} value={employee.user_id}>{employeeName(employee, profiles)}</option>)}</select></label></>}</div><button onClick={() => void saveProfile()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save profile</button></div>}
     </div>}
     {tab === 'leave' && <div className="mt-5"><div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{leaveTypes.map((type) => { const balance = leaveBalances.find((item) => item.employee_profile_id === selected?.id && item.leave_type_id === type.id && item.year === new Date().getFullYear()); const remaining = Number(balance?.allocated ?? type.annual_allowance) - Number(balance?.used ?? 0); return <button key={type.id} type="button" onClick={() => void setLeaveAllocation(type.id)} disabled={!canManage} className={cn('rounded-lg border p-4 text-left', panel(theme))}><span className={cn('text-xs font-semibold', muted(theme))}>{type.name}</span><strong className="mt-1 block text-xl">{remaining} days</strong></button>; })}</div><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Leave requests</h3><p className={cn('text-sm', muted(theme))}>{leaveRequests.length} requests</p></div><button onClick={() => void requestLeave()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Request leave</button></div><DataTable headers={['Employee', 'Type', 'Dates', 'Days', 'Status', 'Actions']} theme={theme}>{leaveRequests.map((request) => <tr key={request.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employees.find((employee) => employee.id === request.employee_profile_id), profiles)}</Cell><Cell>{leaveTypes.find((type) => type.id === request.leave_type_id)?.name ?? 'Leave'}</Cell><Cell>{formatDate(request.start_date)} – {formatDate(request.end_date)}</Cell><Cell>{request.days}</Cell><Cell><StatusPill value={request.status} /></Cell><Cell>{canManage && request.status === 'pending' ? <div className="flex gap-2"><IconAction label="Approve" icon={Check} onClick={() => void reviewLeave(request.id, 'approved')} /><IconAction label="Reject" icon={Square} onClick={() => void reviewLeave(request.id, 'rejected')} /></div> : '—'}</Cell></tr>)}</DataTable></div>}
     {tab === 'documents' && <DocumentPanel workspaceId={workspaceId} userId={userId} employee={selected} canManage={canManage} theme={theme} onNotice={onNotice} />}
     {tab === 'performance' && <PerformancePanel workspaceId={workspaceId} userId={userId} employee={selected} canManage={canManage} theme={theme} onNotice={onNotice} />}
-    {tab === 'compensation' && canManage && <CompensationPanel workspaceId={workspaceId} employee={selected} theme={theme} onNotice={onNotice} />}
+    {tab === 'compensation' && canManage && <CompensationPanel workspaceId={workspaceId} userId={userId} employee={selected} role={role} theme={theme} onNotice={onNotice} />}
   </ModuleFrame>;
 }
 
@@ -348,14 +386,23 @@ function PerformancePanel({ workspaceId, userId, employee, canManage, theme, onN
   return <div className="mt-5">{canManage && <button onClick={() => void add()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Add record</button>}<div className="mt-4 space-y-3">{records.map((record) => <div key={record.id} className={cn('rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><strong>{record.title}</strong><StatusPill value={record.record_type} /></div><p className={cn('mt-2 text-sm', muted(theme))}>{record.details || 'No details'}</p><span className={cn('mt-2 block text-xs', muted(theme))}>{formatDate(record.review_date)}{record.rating != null ? ` · ${record.rating}/5` : ''}</span></div>)}</div>{records.length === 0 && <EmptyState icon={Gauge} title="No performance records" body="Reviews, achievements, warnings, and goals will appear here." theme={theme} />}</div>;
 }
 
-function CompensationPanel({ workspaceId, employee, theme, onNotice }: { workspaceId: string; employee: EmployeeProfile | null; theme: Theme; onNotice: (message: string) => void }) {
+function CompensationPanel({ workspaceId, userId, employee, role, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; role: WorkspaceRole; theme: Theme; onNotice: (message: string) => void }) {
   const [country, setCountry] = useState('US');
   const [compensationType, setCompensationType] = useState('hourly');
   const [amount, setAmount] = useState('');
   const [taxStatus, setTaxStatus] = useState('');
   const [bankAccount, setBankAccount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
+  const [paymentDetails, setPaymentDetails] = useState('');
   const [governmentIds, setGovernmentIds] = useState<Record<string, string>>({});
+  const [payrollFields, setPayrollFields] = useState<EmployeePayrollField[]>([]);
+  const [addingField, setAddingField] = useState(false);
+  const [fieldName, setFieldName] = useState('');
+  const [fieldKind, setFieldKind] = useState<'earning' | 'deduction'>('deduction');
+  const [fieldCalculation, setFieldCalculation] = useState<'fixed' | 'percentage'>('percentage');
+  const [fieldValue, setFieldValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const canCreateFields = role === 'owner';
   const idFields = country === 'PH' ? ['TIN', 'SSS Number', 'PhilHealth Number', 'Pag-IBIG Number'] : country === 'US' ? ['SSN', 'TIN'] : ['Tax ID', 'Government ID'];
 
   useEffect(() => {
@@ -363,18 +410,26 @@ function CompensationPanel({ workspaceId, employee, theme, onNotice }: { workspa
     void supabase.from('workforce_settings').select('country_code').eq('workspace_id', workspaceId).maybeSingle().then(({ data }) => setCountry(data?.country_code ?? 'US'));
   }, [workspaceId]);
 
-  useEffect(() => {
+  const loadCompensation = useCallback(async () => {
     if (!supabase || !employee) return;
-    void supabase.rpc('get_employee_sensitive_payroll', { target_employee_profile_id: employee.id }).then(({ data, error }) => {
-      if (error) { onNotice(error.message); return; }
-      const value = (data ?? {}) as Record<string, unknown>;
-      setCompensationType(String(value.compensation_type ?? 'hourly'));
-      setAmount(String(value.compensation_amount ?? ''));
-      setTaxStatus(String(value.tax_status ?? ''));
-      setBankAccount(String(value.bank_account ?? ''));
-      setGovernmentIds((value.government_ids as Record<string, string>) ?? {});
-    });
+    const [sensitiveResult, fieldsResult] = await Promise.all([
+      supabase.rpc('get_employee_sensitive_payroll', { target_employee_profile_id: employee.id }),
+      supabase.from('employee_payroll_fields').select('*').eq('employee_profile_id', employee.id).order('name'),
+    ]);
+    if (sensitiveResult.error || fieldsResult.error) return onNotice(sensitiveResult.error?.message ?? fieldsResult.error?.message ?? 'Compensation could not be loaded.');
+    const value = (sensitiveResult.data ?? {}) as Record<string, unknown>;
+    const countryFields = (value.country_fields as Record<string, string>) ?? {};
+    setCompensationType(String(value.compensation_type ?? 'hourly'));
+    setAmount(String(value.compensation_amount ?? ''));
+    setTaxStatus(String(value.tax_status ?? ''));
+    setBankAccount(String(value.bank_account ?? ''));
+    setPaymentMethod(countryFields.payment_method || 'Bank Transfer');
+    setPaymentDetails(countryFields.payment_details || '');
+    setGovernmentIds((value.government_ids as Record<string, string>) ?? {});
+    setPayrollFields((fieldsResult.data ?? []) as EmployeePayrollField[]);
   }, [employee, onNotice]);
+
+  useEffect(() => { void loadCompensation(); }, [loadCompensation]);
 
   const save = async () => {
     if (!supabase || !employee) return;
@@ -386,23 +441,60 @@ function CompensationPanel({ workspaceId, employee, theme, onNotice }: { workspa
       new_tax_status: taxStatus,
       new_bank_account: bankAccount,
       new_government_ids: governmentIds,
-      new_country_fields: {},
+      new_country_fields: { payment_method: paymentMethod, payment_details: paymentDetails },
     });
     setSaving(false);
     if (error) onNotice(error.message); else onNotice('Encrypted payroll information saved.');
   };
 
+  const addPayrollField = async () => {
+    if (!supabase || !employee || role !== 'owner') return;
+    const value = Number(fieldValue);
+    if (!fieldName.trim() || !Number.isFinite(value) || value < 0) return onNotice('Enter a field name and a valid non-negative value.');
+    const { error } = await supabase.from('employee_payroll_fields').insert({
+      workspace_id: workspaceId, employee_profile_id: employee.id, name: fieldName.trim(),
+      item_kind: fieldKind, calculation_type: fieldCalculation, value,
+      country_code: country || null, created_by: userId,
+    });
+    if (error) return onNotice(error.message);
+    setAddingField(false); setFieldName(''); setFieldValue(''); setFieldKind('deduction'); setFieldCalculation('percentage');
+    await loadCompensation();
+  };
+
+  const deletePayrollField = async (fieldId: string) => {
+    if (!supabase || role !== 'owner' || !window.confirm('Delete this payroll field?')) return;
+    const { error } = await supabase.from('employee_payroll_fields').delete().eq('id', fieldId);
+    if (error) onNotice(error.message); else await loadCompensation();
+  };
+
   if (!employee) return <EmptyState icon={Banknote} title="Select an employee" body="Choose an employee to manage compensation." theme={theme} />;
-  return <div className={cn('mt-5 max-w-3xl rounded-lg border p-5', panel(theme))}>
-    <div className="mb-5"><h3 className="font-bold">Encrypted payroll information</h3><p className={cn('mt-1 text-sm', muted(theme))}>Compensation, banking, tax, and government identifiers are stored separately with encryption.</p></div>
+  const suggestedFields = payrollFieldSuggestions(country);
+  return <div className={cn('mt-5 max-w-5xl rounded-lg border p-5', panel(theme))}>
+    <div className="mb-5"><h3 className="font-bold">Encrypted payroll information</h3><p className={cn('mt-1 text-sm', muted(theme))}>Compensation, payment, tax, and government details are encrypted separately.</p></div>
     <div className="grid gap-4 sm:grid-cols-2">
       <SelectField label="Compensation type" value={compensationType} options={['hourly', 'daily', 'weekly', 'semimonthly', 'monthly', 'annual']} onChange={setCompensationType} theme={theme} />
       <Field label="Compensation amount" type="number" value={amount} onChange={setAmount} theme={theme} />
       <Field label="Tax status" value={taxStatus} onChange={setTaxStatus} theme={theme} />
       <Field label="Bank account / E-wallet" value={bankAccount} onChange={setBankAccount} theme={theme} />
+      <SelectField label="Payment method" value={paymentMethod} options={['Bank Transfer', 'Check', 'Cash', 'GCash', 'PayPal', 'Zelle', 'Venmo', 'Apple Pay', 'Other']} onChange={setPaymentMethod} theme={theme} />
+      <Field label="Payment details" value={paymentDetails} onChange={setPaymentDetails} theme={theme} />
       {idFields.map((field) => <div key={field}><Field label={field} value={governmentIds[field] ?? ''} onChange={(value) => setGovernmentIds({ ...governmentIds, [field]: value })} theme={theme} /></div>)}
     </div>
     <button onClick={() => void save()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save encrypted details</button>
+    <div className={cn('mt-6 border-t pt-5', border(theme))}>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold">Payroll items</h3><p className={cn('mt-1 text-sm', muted(theme))}>Employee-specific earnings and deductions included in payroll calculations.</p></div>{canCreateFields && <button onClick={() => setAddingField((open) => !open)} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />Add field</button>}</div>
+      {addingField && <div className={cn('mt-4 rounded-lg border p-4', panel(theme))}>
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="md:col-span-2"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Field name</span><input list="payroll-field-suggestions" value={fieldName} onChange={(event) => setFieldName(event.target.value)} placeholder="e.g. Medicare" className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))} /><datalist id="payroll-field-suggestions">{suggestedFields.map((name) => <option key={name} value={name} />)}</datalist></label>
+          <SelectField label="Type" value={fieldKind} options={['earning', 'deduction']} onChange={(value) => setFieldKind(value as 'earning' | 'deduction')} theme={theme} />
+          <SelectField label="Calculation" value={fieldCalculation} options={['percentage', 'fixed']} onChange={(value) => setFieldCalculation(value as 'fixed' | 'percentage')} theme={theme} />
+          <Field label={fieldCalculation === 'percentage' ? 'Percentage' : 'Fixed amount'} type="number" value={fieldValue} onChange={setFieldValue} theme={theme} />
+        </div>
+        <div className="mt-3 flex justify-end gap-2"><button onClick={() => setAddingField(false)} className={cn('h-9 rounded-lg border px-3 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void addPayrollField()} className="h-9 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save field</button></div>
+      </div>}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">{payrollFields.map((field) => <div key={field.id} className="flex items-center justify-between gap-3 rounded-lg border border-current/10 px-3 py-3"><span><strong className="block text-sm">{field.name}</strong><span className={cn('text-xs capitalize', muted(theme))}>{field.item_kind} · {field.calculation_type} · {field.value}{field.calculation_type === 'percentage' ? '%' : ''}</span></span>{canCreateFields && <IconAction label="Delete payroll field" icon={Trash2} onClick={() => void deletePayrollField(field.id)} />}</div>)}</div>
+      {payrollFields.length === 0 && <p className={cn('mt-4 rounded-lg border border-dashed p-4 text-sm', muted(theme))}>No employee-specific payroll items yet. Suggested for {country}: {suggestedFields.join(', ')}.</p>}
+    </div>
   </div>;
 }
 
@@ -426,7 +518,6 @@ function SmallInput({ label, value, onChange, theme }: { label: string; value: s
 function SelectField({ label, value, options, onChange, theme, compact }: { label: string; value: string; options: string[]; onChange: (value: string) => void; theme: Theme; compact?: boolean }) { return <label className={cn('block', compact && 'w-44')}><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm capitalize', panel(theme), compact && 'h-10')}>{options.map((option) => <option key={option} value={option}>{option ? option.replaceAll('_', ' ') : 'Not set'}</option>)}</select></label>; }
 function Segmented({ options, value, onChange, theme }: { options: string[][]; value: string; onChange: (value: string) => void; theme: Theme }) { return <div className={cn('inline-flex rounded-lg border p-1', panel(theme))}>{options.map(([key, label]) => <button key={key} onClick={() => onChange(key)} className={cn('h-9 rounded-md px-4 text-sm font-semibold', value === key ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>{label}</button>)}</div>; }
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) { return <label className="flex items-center justify-between gap-3 py-1.5 text-sm"><span>{label}</span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" /></label>; }
-function Requirement({ icon: Icon, label, enabled }: { icon: typeof MapPin; label: string; enabled: boolean }) { return <div className="flex items-center justify-between"><span className="flex items-center gap-2"><Icon className="h-4 w-4" />{label}</span><span className={cn('text-xs font-semibold', enabled ? 'text-[#16A34A]' : 'text-current opacity-45')}>{enabled ? 'Enabled' : 'Off'}</span></div>; }
 function StatusPill({ value }: { value: string }) { return <span className="inline-flex rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold capitalize text-[var(--accent-strong)]">{value.replaceAll('_', ' ')}</span>; }
 function IconAction({ label, icon: Icon, onClick }: { label: string; icon: typeof Check; onClick: () => void }) { return <button aria-label={label} title={label} onClick={onClick} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-current/20"><Icon className="h-3.5 w-3.5" /></button>; }
 function EmptyState({ icon: Icon, title, body, theme }: { icon: typeof Banknote; title: string; body: string; theme: Theme }) { return <div className={cn('mt-8 flex min-h-56 flex-col items-center justify-center rounded-lg border p-8 text-center', panel(theme))}><Icon className="h-8 w-8 text-[var(--accent)]" /><h3 className="mt-3 font-bold">{title}</h3><p className={cn('mt-1 max-w-md text-sm', muted(theme))}>{body}</p></div>; }
@@ -436,6 +527,11 @@ function border(theme: Theme) { return theme === 'dark' ? 'border-white/10' : 'b
 function muted(theme: Theme) { return theme === 'dark' ? 'text-[#AAA4B3]' : 'text-[#716A78]'; }
 function buttonSurface(theme: Theme) { return theme === 'dark' ? 'border-white/15 bg-white/[0.05] hover:bg-white/10' : 'border-[#DCD7E1] bg-white hover:bg-[#F7F6F9]'; }
 function employeeName(employee: EmployeeProfile | undefined | null, profiles: Record<string, AppProfile>) { if (!employee) return 'Employee'; const profile = profiles[employee.user_id]; return [employee.first_name, employee.last_name].filter(Boolean).join(' ') || profile?.full_name || profile?.display_name || 'Employee'; }
+function payrollFieldSuggestions(country: string) {
+  if (country === 'US') return ['Medicare', 'Social Security', 'Federal Tax', 'State Income Tax', 'State Disability Insurance'];
+  if (country === 'PH') return ['SSS', 'Pag-IBIG', 'PhilHealth', 'Withholding Tax'];
+  return ['Income Tax', 'Social Insurance', 'Health Insurance', 'Pension', 'Other Deduction'];
+}
 function workedHours(entry: TimeEntry, now: number) { const end = entry.clock_out ? new Date(entry.clock_out).getTime() : now; const activeBreak = entry.break_started_at ? Math.max(0, now - new Date(entry.break_started_at).getTime()) / 1000 : 0; return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3600000 - (entry.break_seconds + activeBreak) / 3600); }
 function formatDuration(hours: number) { const totalMinutes = Math.max(0, Math.round(hours * 60)); return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`; }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }

@@ -2565,6 +2565,7 @@ function AdminView({
   const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false);
   const [roleError, setRoleError] = useState('');
   const [attendancePermissions, setAttendancePermissions] = useState<Record<string, boolean>>({});
+  const [timekeepingPermissions, setTimekeepingPermissions] = useState<Record<string, boolean>>({});
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
     { title: 'Admins', roles: ['owner', 'admin'] },
     { title: 'Members', roles: ['member'] },
@@ -2573,9 +2574,10 @@ function AdminView({
 
   useEffect(() => {
     if (!supabase || !workspace?.id) return;
-    void supabase.from('workforce_permissions').select('user_id, manage_time_entries').eq('workspace_id', workspace.id).then(({ data, error }) => {
+    void supabase.from('workforce_permissions').select('user_id, manage_time_entries, manage_timekeeping_settings').eq('workspace_id', workspace.id).then(({ data, error }) => {
       if (error) { setRoleError(error.message); return; }
       setAttendancePermissions(Object.fromEntries((data ?? []).map((permission) => [String(permission.user_id), Boolean(permission.manage_time_entries)])));
+      setTimekeepingPermissions(Object.fromEntries((data ?? []).map((permission) => [String(permission.user_id), Boolean(permission.manage_timekeeping_settings)])));
     });
   }, [workspace?.id]);
 
@@ -2588,6 +2590,17 @@ function AdminView({
     }, { onConflict: 'workspace_id,user_id' });
     if (error) setRoleError(error.message);
     else setAttendancePermissions((current) => ({ ...current, [targetUserId]: enabled }));
+  };
+
+  const setTimekeepingPermission = async (targetUserId: string, enabled: boolean) => {
+    if (!supabase || !workspace?.id || currentRole !== 'owner') return;
+    setRoleError('');
+    const { error } = await supabase.from('workforce_permissions').upsert({
+      workspace_id: workspace.id, user_id: targetUserId, manage_timekeeping_settings: enabled,
+      granted_by: workspace.owner_id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'workspace_id,user_id' });
+    if (error) setRoleError(error.message);
+    else setTimekeepingPermissions((current) => ({ ...current, [targetUserId]: enabled }));
   };
 
   return (
@@ -2609,7 +2622,7 @@ function AdminView({
             <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
-                <div><p className="text-sm font-semibold">Attendance management</p><p className={cn('text-xs leading-5', muted(theme))}>Only Owners can edit or delete time entries by default. Owners may grant this permission to individual Admins.</p></div>
+                <div><p className="text-sm font-semibold">Timekeeping permissions</p><p className={cn('text-xs leading-5', muted(theme))}>Owners may separately grant an Admin access to employee clock-in settings and to attendance record editing.</p></div>
               </div>
             </div>
           )}
@@ -2651,8 +2664,9 @@ function AdminView({
                             <option value="admin">Admin</option>
                             <option value="member">Member</option>
                             <option value="guest">Guest</option>
-                          </select>
-                          {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage attendance</span><input type="checkbox" checked={Boolean(attendancePermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setAttendancePermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
+                            </select>
+                            {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage timekeeping</span><input type="checkbox" checked={Boolean(timekeepingPermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setTimekeepingPermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
+                            {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage attendance</span><input type="checkbox" checked={Boolean(attendancePermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setAttendancePermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
                           </div>
                         </div>
                       );

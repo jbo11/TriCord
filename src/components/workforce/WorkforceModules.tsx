@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, Clock3, Coffee, FileUp,
-  Gauge, Pause, Play, Plus, RefreshCw, Search, Square, Users,
+  Gauge, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Users,
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -82,11 +82,12 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
   const [selectedPolicyEmployeeId, setSelectedPolicyEmployeeId] = useState('');
   const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
   const [adminCanManageEntries, setAdminCanManageEntries] = useState(false);
+  const [adminCanManageSettings, setAdminCanManageSettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
   const selfieRef = useRef<HTMLInputElement | null>(null);
-  const canConfigure = role === 'owner';
+  const canConfigure = role === 'owner' || (role === 'admin' && adminCanManageSettings);
   const canClock = role === 'admin' || role === 'member';
   const canManageEntries = role === 'owner' || (role === 'admin' && adminCanManageEntries);
 
@@ -97,7 +98,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId),
       supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).order('clock_in', { ascending: false }).limit(50),
       supabase.from('employee_timekeeping_policies').select('*').eq('workspace_id', workspaceId),
-      supabase.from('workforce_permissions').select('manage_time_entries').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
+      supabase.from('workforce_permissions').select('manage_time_entries, manage_timekeeping_settings').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
     ]);
     if (employeeResult.error || employeesResult.error || entriesResult.error || policiesResult.error || permissionResult.error) {
       onNotice(employeeResult.error?.message ?? employeesResult.error?.message ?? entriesResult.error?.message ?? policiesResult.error?.message ?? permissionResult.error?.message ?? 'Timekeeping could not be loaded.');
@@ -111,7 +112,8 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
     setEntries((entriesResult.data ?? []) as TimeEntry[]);
     setPolicies(nextPolicies);
     setAdminCanManageEntries(Boolean(permissionResult.data?.manage_time_entries));
-    if (role === 'owner') {
+    setAdminCanManageSettings(Boolean(permissionResult.data?.manage_timekeeping_settings));
+    if (role === 'owner' || (role === 'admin' && permissionResult.data?.manage_timekeeping_settings)) {
       setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
     } else {
       setSettings(nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null);
@@ -119,10 +121,10 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
   }, [onNotice, userId, workspaceId]);
 
   useEffect(() => {
-    if (role !== 'owner') return;
+    if (!canConfigure) return;
     const selected = policies.find((policy) => policy.employee_profile_id === selectedPolicyEmployeeId);
     setSettings(selected ? { ...selected } : null);
-  }, [policies, role, selectedPolicyEmployeeId]);
+  }, [canConfigure, policies, selectedPolicyEmployeeId]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
@@ -175,10 +177,9 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
   };
 
   const saveSettings = async () => {
-    if (!supabase || !settings || role !== 'owner') return;
+    if (!supabase || !settings || !canConfigure) return;
     setSaving(true);
     const { error } = await supabase.from('employee_timekeeping_policies').update({
-      enabled: settings.enabled,
       capture_location: settings.capture_location, capture_ip: settings.capture_ip,
       capture_device: settings.capture_device, require_selfie: settings.require_selfie,
       enforce_geofence: settings.enforce_geofence, office_latitude: settings.office_latitude,
@@ -216,11 +217,10 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
             </div>
           </div>}
           {canClock && <div className={cn('flex flex-wrap items-center gap-3 border-b py-5', border(theme))}>
-            {!settings?.enabled && <p className={cn('text-sm font-semibold', muted(theme))}>Timekeeping is disabled for your employee profile.</p>}
-            {!active && <ActionButton icon={Play} label="Clock in" onClick={() => void runAction('clock_in')} disabled={saving || !settings?.enabled} />}
-            {active && !active.break_started_at && <ActionButton icon={Coffee} label="Start break" onClick={() => void runAction('break_start')} disabled={saving || !settings?.enabled} secondary />}
-            {active?.break_started_at && <ActionButton icon={Play} label="Resume work" onClick={() => void runAction('break_end')} disabled={saving || !settings?.enabled} />}
-            {active && <ActionButton icon={Square} label="Clock out" onClick={() => void runAction('clock_out')} disabled={saving || !settings?.enabled} danger />}
+            {!active && <ActionButton icon={Play} label="Clock in" onClick={() => void runAction('clock_in')} disabled={saving} />}
+            {active && !active.break_started_at && <ActionButton icon={Coffee} label="Start break" onClick={() => void runAction('break_start')} disabled={saving} secondary />}
+            {active?.break_started_at && <ActionButton icon={Play} label="Resume work" onClick={() => void runAction('break_end')} disabled={saving} />}
+            {active && <ActionButton icon={Square} label="Clock out" onClick={() => void runAction('clock_out')} disabled={saving} danger />}
             {settings?.require_selfie && !active && (
               <>
                 <input ref={selfieRef} className="hidden" type="file" accept="image/*" capture="user" onChange={(event) => setSelfie(event.target.files?.[0] ?? null)} />
@@ -231,7 +231,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
           {role === 'owner' && <div><h3 className="font-bold">Attendance records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Owners can correct or remove entries. Admins need an explicit attendance permission.</p></div>}
           <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(canManageEntries ? ['Actions'] : [])]} theme={theme}>
             {visibleEntries.map((entry) => <tr key={entry.id} className={cn('border-b last:border-0', border(theme))}>
-              {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{canManageEntries && <Cell><div className="flex gap-2"><IconAction label="Adjust attendance" icon={Clock3} onClick={() => void adjustEntry(entry)} /><IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} /></div></Cell>}
+              {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{canManageEntries && <Cell><div className="flex gap-2"><IconAction label="Edit attendance" icon={Pencil} onClick={() => void adjustEntry(entry)} /><IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} /></div></Cell>}
             </tr>)}
           </DataTable>
         </div>
@@ -240,8 +240,6 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, theme, onNotice 
           <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Requirements are configured separately for each Admin or Member.</p>
           <label className="mt-4 block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select value={selectedPolicyEmployeeId} onChange={(event) => setSelectedPolicyEmployeeId(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm font-semibold', panel(theme))}>{policies.map((policy) => <option key={policy.employee_profile_id} value={policy.employee_profile_id}>{employeeName(employees.find((item) => item.id === policy.employee_profile_id), profiles)}</option>)}</select></label>
           {settings && <div className={cn('mt-4 border-t pt-4', border(theme))}>
-            <Toggle checked={settings.enabled} onChange={(checked) => setSettings({ ...settings, enabled: checked })} label="Enable timekeeping" />
-            <div className={cn('my-3 border-t', border(theme))} />
             {(['capture_location', 'capture_ip', 'capture_device', 'require_selfie', 'enforce_geofence'] as const).map((key) => <div key={key}><Toggle checked={settings[key]} onChange={(checked) => setSettings({ ...settings, [key]: checked })} label={settingLabel(key)} /></div>)}
             {settings.enforce_geofence && <div className="mt-3 grid grid-cols-2 gap-2"><SmallInput label="Latitude" value={settings.office_latitude ?? ''} onChange={(value) => setSettings({ ...settings, office_latitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Longitude" value={settings.office_longitude ?? ''} onChange={(value) => setSettings({ ...settings, office_longitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Radius (m)" value={settings.geofence_radius_meters} onChange={(value) => setSettings({ ...settings, geofence_radius_meters: Number(value) })} theme={theme} /></div>}
             <div className="mt-4 grid grid-cols-2 gap-2"><SmallInput label="Workday starts" value={settings.workday_start?.slice(0, 5) ?? '09:00'} onChange={(value) => setSettings({ ...settings, workday_start: value })} theme={theme} /><SmallInput label="Workday ends" value={settings.workday_end?.slice(0, 5) ?? '17:00'} onChange={(value) => setSettings({ ...settings, workday_end: value })} theme={theme} /><SmallInput label="Grace (minutes)" value={settings.grace_period_minutes} onChange={(value) => setSettings({ ...settings, grace_period_minutes: Number(value) })} theme={theme} /></div>

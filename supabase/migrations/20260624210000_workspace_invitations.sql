@@ -21,6 +21,7 @@ where accepted_at is null;
 
 alter table public.workspace_invitations enable row level security;
 
+drop policy if exists "Admins read workspace invitations" on public.workspace_invitations;
 create policy "Admins read workspace invitations"
 on public.workspace_invitations
 for select

@@ -1,26 +1,5 @@
-create or replace function public.touch_updated_at()
-returns trigger
-language plpgsql
-set search_path = public
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-create or replace function public.bump_post_activity()
-returns trigger
-language plpgsql
-set search_path = public
-as $$
-begin
-  update public.posts
-  set last_activity_at = now(), updated_at = now()
-  where id = new.post_id;
-  return new;
-end;
-$$;
+-- Apply the finalized Hub terminology to databases where the original
+-- onboarding RPC migrations have already been recorded as complete.
 
 create or replace function public.create_initial_workspace(
   workspace_name text,

@@ -4,7 +4,7 @@ export type ContentState = 'open' | 'read_only' | 'locked' | 'archived';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type SortMode = 'active' | 'newest' | 'assigned' | 'archived';
-export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'admin';
+export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'timekeeping' | 'hr' | 'payroll' | 'reports' | 'admin';
 export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
 
 export interface AppProfile {

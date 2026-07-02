@@ -3,6 +3,8 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUpDown,
+  Banknote,
+  BriefcaseBusiness,
   Bug,
   Camera,
   CalendarDays,
@@ -10,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  Clock3,
   ClipboardList,
   Copy,
   Download,
@@ -18,6 +21,7 @@ import {
   FileText,
   Filter,
   Globe2,
+  ChartNoAxesCombined,
   GripVertical,
   Headphones,
   Image as ImageIcon,
@@ -56,6 +60,7 @@ import {
 import { type RealtimeChannel, type Session } from '@supabase/supabase-js';
 import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { WorkforceModule } from './components/workforce/WorkforceModules';
 import {
   AppComment,
   AppAttachment,
@@ -132,6 +137,7 @@ interface RoomPreference {
 }
 
 type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about' | 'report';
+interface HubSetup { name: string; countryCode: string; currencyCode: string; locale: string; timezone: string; dateFormat: string; payrollFrequency: string; firstDayOfWeek: number }
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
@@ -611,7 +617,13 @@ export default function App() {
     if (view === 'admin' && !canManageAdmin) {
       setView('feed');
     }
-  }, [canManageAdmin, view]);
+    if ((view === 'reports') && !canManageAdmin) {
+      setView('feed');
+    }
+    if ((view === 'timekeeping' || view === 'hr' || view === 'payroll') && currentRole === 'guest') {
+      setView('feed');
+    }
+  }, [canManageAdmin, currentRole, view]);
 
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
@@ -661,8 +673,8 @@ export default function App() {
         setTheme={setTheme}
         email={session.user.email ?? ''}
         onSignOut={() => void supabase?.auth.signOut()}
-        onCreate={async (workspaceName) => {
-          await createWorkspace(session, workspaceName);
+        onCreate={async (setup) => {
+          await createWorkspace(session, setup);
           await loadMemberships(session.user.id);
         }}
       />
@@ -740,29 +752,20 @@ export default function App() {
                 <p className={cn('truncate text-xs font-semibold uppercase tracking-[0.24em]', muted(theme))}>Hub</p>
                 <h1 className="truncate text-2xl font-bold tracking-tight md:text-3xl">{selectedWorkspace?.name ?? 'TriCord'}</h1>
               </div>
-              <label className={cn('hidden h-11 w-[min(28vw,360px)] items-center gap-2 rounded-lg border px-3 md:flex', surface(theme))}>
+              {view === 'feed' && <label className={cn('hidden h-11 w-[min(28vw,360px)] items-center gap-2 rounded-lg border px-3 md:flex', surface(theme))}>
                 <Search className={cn('h-4 w-4 shrink-0', muted(theme))} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search posts"
-                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-current"
-                />
-              </label>
-              <button
-                onClick={() => setComposerOpen(true)}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-4 text-sm font-semibold text-[#FAF9FC] shadow-lg shadow-[#17151D]/20 transition hover:bg-[#17151D]"
-              >
-                <Plus className="h-4 w-4" />
-                <span className="hidden sm:inline">New post</span>
-              </button>
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search posts" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-current" />
+              </label>}
+              {view === 'feed' && <button onClick={() => setComposerOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-4 text-sm font-semibold text-[#FAF9FC] shadow-lg shadow-[#17151D]/20 transition hover:bg-[#17151D]">
+                <Plus className="h-4 w-4" /><span className="hidden sm:inline">New post</span>
+              </button>}
               {!chatOpen && (
                 <button type="button" aria-label="Toggle side panel" title="Toggle side panel" onClick={() => setChatOpen(true)} className={cn('inline-flex h-11 w-11 items-center justify-center rounded-lg border', surface(theme))}>
                   <PanelRightOpen className="h-4 w-4" />
                 </button>
               )}
             </div>
-            <label className={cn('mt-3 flex h-10 items-center gap-2 rounded-lg border px-3 md:hidden', surface(theme))}>
+            {view === 'feed' && <label className={cn('mt-3 flex h-10 items-center gap-2 rounded-lg border px-3 md:hidden', surface(theme))}>
               <Search className={cn('h-4 w-4 shrink-0', muted(theme))} />
               <input
                 value={query}
@@ -770,7 +773,7 @@ export default function App() {
                 placeholder="Search posts"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-current"
               />
-            </label>
+            </label>}
           </header>
 
           <div
@@ -903,6 +906,19 @@ export default function App() {
                       setNotice(getErrorMessage(caughtError));
                     }
                   }}
+                />
+              )}
+
+              {(view === 'timekeeping' || view === 'hr' || view === 'payroll' || view === 'reports') && currentRole && currentRole !== 'guest' && (
+                <WorkforceModule
+                  view={view}
+                  workspaceId={workspaceId}
+                  userId={session.user.id}
+                  role={currentRole}
+                  profiles={profiles}
+                  memberships={memberships}
+                  theme={theme}
+                  onNotice={setNotice}
                 />
               )}
               {view === 'admin' && canManageAdmin && (
@@ -1311,6 +1327,11 @@ function Sidebar({
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
           <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />
+          {currentRole !== 'guest' && <div className={cn('my-3 border-t', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')} />}
+          {currentRole !== 'guest' && <NavButton icon={Clock3} label="Timekeeping" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
+          {currentRole !== 'guest' && <NavButton icon={BriefcaseBusiness} label="HR" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
+          {currentRole !== 'guest' && <NavButton icon={Banknote} label="Payroll" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
+          {canManageAdmin && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
           {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
         </nav>
 
@@ -3290,13 +3311,19 @@ function OnboardingScreen({
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
   email: string;
-  onCreate: (name: string) => Promise<void>;
+  onCreate: (setup: HubSetup) => Promise<void>;
   onSignOut: () => void;
 }) {
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [creatingHub, setCreatingHub] = useState(false);
+  const [countryCode, setCountryCode] = useState('US');
+  const [currencyCode, setCurrencyCode] = useState('USD');
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [dateFormat, setDateFormat] = useState('MM/DD/YYYY');
+  const [payrollFrequency, setPayrollFrequency] = useState('biweekly');
+  const [firstDayOfWeek, setFirstDayOfWeek] = useState(0);
 
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
@@ -3327,7 +3354,7 @@ function OnboardingScreen({
               setSubmitting(true);
               setError('');
               try {
-                await onCreate(name.trim());
+                await onCreate({ name: name.trim(), countryCode, currencyCode, locale: navigator.language || 'en-US', timezone, dateFormat, payrollFrequency, firstDayOfWeek });
               } catch (caughtError) {
                 setError(getErrorMessage(caughtError));
               } finally {
@@ -3339,6 +3366,14 @@ function OnboardingScreen({
               This creates a separate Hub and makes {email} the Owner. Do this only if you are starting a new Hub.
             </div>
             <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New Hub name" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-semibold">Country<select value={countryCode} onChange={(event) => { const country = event.target.value; setCountryCode(country); const defaults: Record<string, [string, string]> = { US: ['USD', 'MM/DD/YYYY'], PH: ['PHP', 'MM/DD/YYYY'], CA: ['CAD', 'YYYY-MM-DD'], AU: ['AUD', 'DD/MM/YYYY'], GB: ['GBP', 'DD/MM/YYYY'] }; const next = defaults[country]; if (next) { setCurrencyCode(next[0]); setDateFormat(next[1]); } }} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="US">United States</option><option value="PH">Philippines</option><option value="CA">Canada</option><option value="AU">Australia</option><option value="GB">United Kingdom</option><option value="OTHER">Other</option></select></label>
+              <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
+              <label className="col-span-2 text-xs font-semibold">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
+              <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
+              <label className="text-xs font-semibold">Payroll frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+              <label className="col-span-2 text-xs font-semibold">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
+            </div>
             <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Create new Hub as Owner
@@ -3569,28 +3604,32 @@ async function ensureProfile(session: Session) {
   });
 }
 
-async function createWorkspace(session: Session, workspaceName: string) {
+async function createWorkspace(session: Session, setup: HubSetup) {
   if (!supabase) return;
   const email = session.user.email ?? '';
   const displayName = session.user.user_metadata?.full_name ?? email.split('@')[0] ?? 'Member';
-  const { error } = await supabase.rpc('create_initial_workspace', {
-    workspace_name: workspaceName,
+  const { data, error } = await supabase.rpc('create_initial_workspace', {
+    workspace_name: setup.name,
     profile_email: email,
     profile_display_name: displayName,
     profile_avatar_url: session.user.user_metadata?.avatar_url ?? null,
     profile_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
 
-  if (!error) return;
+  if (!error) {
+    await saveInitialWorkforceSettings(String(data), setup);
+    return;
+  }
 
   const missingRpc = error.code === 'PGRST202' || error.message.toLowerCase().includes('schema cache');
   if (!missingRpc) throw error;
 
-  await createWorkspaceWithTableInserts(session, workspaceName);
+  const workspaceId = await createWorkspaceWithTableInserts(session, setup.name);
+  await saveInitialWorkforceSettings(workspaceId, setup);
 }
 
 async function createWorkspaceWithTableInserts(session: Session, workspaceName: string) {
-  if (!supabase) return;
+  if (!supabase) throw new Error('Supabase is not configured.');
   await ensureProfile(session);
 
   const slug = `${slugify(workspaceName)}-${crypto.randomUUID().slice(0, 8)}`;
@@ -3617,6 +3656,18 @@ async function createWorkspaceWithTableInserts(session: Session, workspaceName: 
   });
 
   if (spaceError) throw spaceError;
+  return workspace.id as string;
+}
+
+async function saveInitialWorkforceSettings(workspaceId: string, setup: HubSetup) {
+  if (!supabase || !workspaceId) return;
+  const { error } = await supabase.from('workforce_settings').upsert({
+    workspace_id: workspaceId, country_code: setup.countryCode, currency_code: setup.currencyCode,
+    locale: setup.locale, timezone: setup.timezone, date_format: setup.dateFormat,
+    payroll_frequency: setup.payrollFrequency, first_day_of_week: setup.firstDayOfWeek,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
 }
 
 async function createSpace(workspaceId: string, userId: string, name: string, access: SpaceAccess) {

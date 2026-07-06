@@ -40,6 +40,29 @@ export interface AppMembership {
   joined_at: string;
 }
 
+export interface WorkspaceCapabilities {
+  workspace_id: string;
+  user_id: string;
+  manage_members: boolean;
+  manage_rooms: boolean;
+  manage_knowledge: boolean;
+  manage_hr: boolean;
+  approve_leave: boolean;
+  manage_timekeeping: boolean;
+  correct_attendance: boolean;
+  manage_payroll: boolean;
+  approve_payroll: boolean;
+  view_reports: boolean;
+  view_audit: boolean;
+}
+
+export interface UserPrivateProfile {
+  user_id: string;
+  phone: string | null;
+  address: string | null;
+  bio: string | null;
+}
+
 export interface AppSpace {
   id: string;
   workspace_id: string;

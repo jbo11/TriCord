@@ -60,7 +60,9 @@ import {
 import { type RealtimeChannel, type Session } from '@supabase/supabase-js';
 import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { canOpenView, hasWorkspaceCapability } from './lib/permissions';
 import { WorkforceModule } from './components/workforce/WorkforceModules';
+import triCordLogo from './assets/tricord-logo.png';
 import {
   AppComment,
   AppAttachment,
@@ -78,7 +80,9 @@ import {
   SortMode,
   TaskPriority,
   TaskStatus,
+  UserPrivateProfile,
   ViewMode,
+  WorkspaceCapabilities,
   WorkspaceRole,
 } from './types';
 
@@ -107,7 +111,7 @@ const knowledgeCategories: { value: KnowledgeCategory; label: string }[] = [
 
 const INVITE_STORAGE_KEY = 'tricord_invite_token';
 const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
-const PROFILE_SELECT = 'id, email, display_name, full_name, nickname, avatar_url, timezone, phone, address, bio';
+const PROFILE_SELECT = 'id, email, display_name, full_name, nickname, avatar_url, timezone';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
 const THREAD_WIDTH_STORAGE_KEY = 'tricord_thread_width';
 const THEME_STORAGE_KEY = 'tricord_theme';
@@ -159,6 +163,8 @@ export default function App() {
   const [attachments, setAttachments] = useState<AppAttachment[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [profiles, setProfiles] = useState<Record<string, AppProfile>>({});
+  const [privateProfile, setPrivateProfile] = useState<UserPrivateProfile | null>(null);
+  const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | null>(null);
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [memberships, setMemberships] = useState<AppMembership[]>([]);
   const [knowledgeArticles, setKnowledgeArticles] = useState<KnowledgeArticle[]>([]);
@@ -188,11 +194,21 @@ export default function App() {
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
-  const canManageAdmin = currentRole === 'owner' || currentRole === 'admin';
+  const hasCapability = useCallback((capability: keyof Omit<WorkspaceCapabilities, 'workspace_id' | 'user_id'>) => (
+    hasWorkspaceCapability(currentRole, capabilities, capability)
+  ), [capabilities, currentRole]);
+  const canManageMembers = hasCapability('manage_members');
+  const canManageRooms = hasCapability('manage_rooms');
+  const canManageKnowledge = hasCapability('manage_knowledge');
+  const canViewReports = hasCapability('view_reports');
+  const canManageAdmin = currentRole === 'owner' || canManageMembers || canManageRooms || canManageKnowledge || hasCapability('view_audit');
+  const canModerateContent = currentRole === 'owner' || currentRole === 'admin';
   const showThreadPanel = chatOpen;
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
-  const currentProfile = session?.user.id ? profiles[session.user.id] : undefined;
+  const currentProfile = session?.user.id && profiles[session.user.id]
+    ? { ...profiles[session.user.id], ...privateProfile }
+    : undefined;
   const ownerEmail = profiles[memberships.find((membership) => membership.role === 'owner')?.user_id ?? '']?.email ?? '';
   const memberProfiles = useMemo(
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
@@ -282,7 +298,7 @@ export default function App() {
     if (!silent) setLoading(true);
     setNotice('');
 
-    const [spaceResult, postResult, taskResult, membershipResult, knowledgeResult] = await Promise.all([
+    const [spaceResult, postResult, taskResult, membershipResult, knowledgeResult, capabilityResult] = await Promise.all([
       supabase
         .from('spaces')
         .select('id, workspace_id, name, slug, access, description, archived_at, created_by, created_at, updated_at')
@@ -311,6 +327,12 @@ export default function App() {
         .select('id, workspace_id, category, title, summary, content, created_by, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
         .order('updated_at', { ascending: false }),
+      supabase
+        .from('workspace_capabilities')
+        .select('workspace_id, user_id, manage_members, manage_rooms, manage_knowledge, manage_hr, approve_leave, manage_timekeeping, correct_attendance, manage_payroll, approve_payroll, view_reports, view_audit')
+        .eq('workspace_id', targetWorkspaceId)
+        .eq('user_id', session?.user.id ?? '')
+        .maybeSingle(),
     ]);
 
     if (spaceResult.error) setNotice(spaceResult.error.message);
@@ -318,6 +340,7 @@ export default function App() {
     if (taskResult.error) setNotice(taskResult.error.message);
     if (membershipResult.error) setNotice(membershipResult.error.message);
     if (knowledgeResult.error) setNotice(knowledgeResult.error.message);
+    if (capabilityResult.error) setNotice(capabilityResult.error.message);
 
     const nextSpaces = (spaceResult.data ?? []) as AppSpace[];
     const nextPosts = (postResult.data ?? []) as AppPost[];
@@ -330,6 +353,7 @@ export default function App() {
     setTasks(nextTasks);
     setMemberships(nextMemberships);
     setKnowledgeArticles(nextKnowledgeArticles);
+    setCapabilities((capabilityResult.data as WorkspaceCapabilities | null) ?? null);
     setSelectedPostId((current) => current || nextPosts[0]?.id || '');
     setActiveSpaceId((current) => (current === 'all' || nextSpaces.some((space) => space.id === current) ? current : 'all'));
 
@@ -350,7 +374,31 @@ export default function App() {
     }
 
     if (!silent) setLoading(false);
-  }, []);
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!supabase || !session?.user.id) {
+      setPrivateProfile(null);
+      return;
+    }
+    void supabase
+      .from('user_private_profiles')
+      .select('user_id, phone, address, bio')
+      .eq('user_id', session.user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) {
+          setNotice(error.message);
+          return;
+        }
+        setPrivateProfile((data as UserPrivateProfile | null) ?? {
+          user_id: session.user.id,
+          phone: null,
+          address: null,
+          bio: null,
+        });
+      });
+  }, [session?.user.id]);
 
   const loadMemberships = useCallback(async (userId: string, preferredWorkspaceId?: string) => {
     if (!supabase) return;
@@ -618,16 +666,10 @@ export default function App() {
   }, [loadComments, selectedPost?.id]);
 
   useEffect(() => {
-    if (view === 'admin' && !canManageAdmin) {
+    if (!canOpenView(view, currentRole, capabilities)) {
       setView('feed');
     }
-    if ((view === 'reports') && !canManageAdmin) {
-      setView('feed');
-    }
-    if ((view === 'timekeeping' || view === 'hr' || view === 'payroll') && currentRole === 'guest') {
-      setView('feed');
-    }
-  }, [canManageAdmin, currentRole, view]);
+  }, [capabilities, currentRole, view]);
 
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
@@ -749,6 +791,8 @@ export default function App() {
           onCreateHub={() => setHubModalOpen(true)}
           onSignOut={() => void supabase?.auth.signOut()}
           canManageAdmin={canManageAdmin}
+          canManageRooms={canManageRooms}
+          canViewReports={canViewReports}
         />
 
         <main className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -820,7 +864,7 @@ export default function App() {
                                 setSelectedPostId(post.id);
                                 setChatOpen(true);
                               }}
-                              canManage={post.author_id === session.user.id || canManageAdmin}
+                              canManage={post.author_id === session.user.id || canModerateContent}
                               onEdit={() => setEditingPost(post)}
                               onAssign={async (assigneeId) => {
                                 try {
@@ -872,7 +916,7 @@ export default function App() {
                   tasks={tasks}
                   profiles={profiles}
                   theme={theme}
-                  canManageTaskActions={canManageAdmin}
+                  canManageTaskActions={canModerateContent}
                   onCreateTask={() => setTaskModalOpen(true)}
                   onEditTask={(task) => setEditingTask(task)}
                   onDeleteTask={async (task) => {
@@ -902,12 +946,12 @@ export default function App() {
                   }}
                 />
               )}
-              {view === 'knowledge' && (
+              {view === 'knowledge' && currentRole !== 'guest' && (
                 <KnowledgeView
                   articles={knowledgeArticles}
                   profiles={profiles}
                   theme={theme}
-                  canManage={canManageAdmin}
+                  canManage={canManageKnowledge}
                   onCreate={() => setKnowledgeModalOpen(true)}
                   onEdit={(article) => setEditingKnowledgeArticle(article)}
                   onDelete={async (article) => {
@@ -930,6 +974,7 @@ export default function App() {
                   role={currentRole}
                   profiles={profiles}
                   memberships={memberships}
+                  capabilities={capabilities}
                   theme={theme}
                   onNotice={setNotice}
                 />
@@ -938,9 +983,11 @@ export default function App() {
                 <AdminView
                   workspace={selectedWorkspace}
                   currentRole={currentRole}
+                  currentCapabilities={capabilities}
                   theme={theme}
                   memberships={memberships}
                   profiles={profiles}
+                  spaces={spaces}
                   onInvite={(email, role) => createWorkspaceInvitation(workspaceId, email, role)}
                   onRoleChange={async (membershipId, role) => {
                     await updateMemberRole(membershipId, role);
@@ -1146,6 +1193,12 @@ export default function App() {
           onSaveProfile={async (input) => {
             if (!session.user) return;
             await updateProfile(session.user.id, input);
+            setPrivateProfile({
+              user_id: session.user.id,
+              phone: input.phone || null,
+              address: input.address || null,
+              bio: input.bio || null,
+            });
             await loadWorkspaceData(workspaceId, true);
           }}
           onUploadAvatar={async (file) => {
@@ -1185,16 +1238,7 @@ function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
 }
 
 function TriCordLogo({ className = '' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 48 48" fill="none" className={className} aria-hidden="true">
-      <path d="M10 8c0 9 3 12 10 16 5 3 6 8 4 16" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M24 6c0 8-8 12-8 19 0 7 8 9 8 17" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M38 8c0 9-3 12-10 16-5 3-6 8-4 16" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-      <circle cx="10" cy="8" r="2.3" fill="currentColor" />
-      <circle cx="24" cy="6" r="2.3" fill="currentColor" />
-      <circle cx="38" cy="8" r="2.3" fill="currentColor" />
-    </svg>
-  );
+  return <img src={triCordLogo} alt="" aria-hidden="true" draggable={false} className={cn('object-contain', className)} />;
 }
 
 function Sidebar({
@@ -1222,6 +1266,8 @@ function Sidebar({
   onCreateHub,
   onSignOut,
   canManageAdmin,
+  canManageRooms,
+  canViewReports,
 }: {
   activeSpaceId: string;
   onSpaceChange: (spaceId: string) => void;
@@ -1247,9 +1293,12 @@ function Sidebar({
   onCreateHub: () => void;
   onSignOut: () => void;
   canManageAdmin: boolean;
+  canManageRooms: boolean;
+  canViewReports: boolean;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
-  const canManageSpaces = currentRole === 'owner' || currentRole === 'admin';
+  const canManageSpaces = currentRole === 'owner' || canManageRooms;
+  const canCreateSpaces = canManageSpaces || currentRole === 'member';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
@@ -1343,8 +1392,8 @@ function Sidebar({
       >
         <div className="mb-5 flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
-              <TriCordLogo className="h-9 w-9" />
+            <div className="flex h-11 w-20 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+              <TriCordLogo className="h-8 w-16" />
             </div>
             <div className="min-w-0">
               <p className={cn('truncate text-xl font-bold tracking-tight', theme === 'dark' ? 'text-[#FAF9FC]' : 'text-[#17151D]')}>TriCord</p>
@@ -1359,13 +1408,13 @@ function Sidebar({
         <nav className="space-y-1">
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
-          <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />
+          {currentRole !== 'guest' && <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />}
           {currentRole !== 'guest' && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Workforce</span><button type="button" aria-label={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} title={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
           {currentRole !== 'guest' && workforceNavOpen && <>
             <NavButton icon={Clock3} label="Timekeeping" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />
             <NavButton icon={BriefcaseBusiness} label="HR" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />
             <NavButton icon={Banknote} label="Payroll" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />
-            {canManageAdmin && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
+            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
             {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
           </>}
         </nav>
@@ -1373,7 +1422,7 @@ function Sidebar({
         <section className="mt-7 min-h-0 overflow-visible">
           <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
-            {canManageSpaces && (
+            {canCreateSpaces && (
               <button aria-label="Create room" onClick={onCreateSpace} className={cn('rounded p-1', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}>
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -2548,24 +2597,44 @@ function KnowledgeView({
 function AdminView({
   workspace,
   currentRole,
+  currentCapabilities,
   theme,
   memberships,
   profiles,
+  spaces,
   onInvite,
   onRoleChange,
 }: {
   workspace?: AppWorkspace;
   currentRole: WorkspaceRole;
+  currentCapabilities: WorkspaceCapabilities | null;
   theme: 'light' | 'dark';
   memberships: AppMembership[];
   profiles: Record<string, AppProfile>;
+  spaces: AppSpace[];
   onInvite: (email: string, role: WorkspaceRole) => Promise<string>;
   onRoleChange: (membershipId: string, role: WorkspaceRole) => Promise<void>;
 }) {
   const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false);
   const [roleError, setRoleError] = useState('');
-  const [attendancePermissions, setAttendancePermissions] = useState<Record<string, boolean>>({});
-  const [timekeepingPermissions, setTimekeepingPermissions] = useState<Record<string, boolean>>({});
+  const [capabilityRows, setCapabilityRows] = useState<Record<string, WorkspaceCapabilities>>({});
+  const [privateContacts, setPrivateContacts] = useState<Record<string, UserPrivateProfile>>({});
+  const [guestRoomAccess, setGuestRoomAccess] = useState<Record<string, string[]>>({});
+  const canManagePeople = currentRole === 'owner' || Boolean(currentCapabilities?.manage_members);
+  const canManageRoomAccess = currentRole === 'owner' || Boolean(currentCapabilities?.manage_members || currentCapabilities?.manage_rooms);
+  const capabilityOptions: { key: keyof Omit<WorkspaceCapabilities, 'workspace_id' | 'user_id'>; label: string }[] = [
+    { key: 'manage_members', label: 'People and roles' },
+    { key: 'manage_rooms', label: 'Rooms' },
+    { key: 'manage_knowledge', label: 'Knowledge' },
+    { key: 'manage_hr', label: 'HR records' },
+    { key: 'approve_leave', label: 'Leave approvals' },
+    { key: 'manage_timekeeping', label: 'Timekeeping settings' },
+    { key: 'correct_attendance', label: 'Attendance corrections' },
+    { key: 'manage_payroll', label: 'Prepare payroll' },
+    { key: 'approve_payroll', label: 'Approve payroll' },
+    { key: 'view_reports', label: 'Workforce reports' },
+    { key: 'view_audit', label: 'Audit history' },
+  ];
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
     { title: 'Admins', roles: ['owner', 'admin'] },
     { title: 'Members', roles: ['member'] },
@@ -2574,33 +2643,68 @@ function AdminView({
 
   useEffect(() => {
     if (!supabase || !workspace?.id) return;
-    void supabase.from('workforce_permissions').select('user_id, manage_time_entries, manage_timekeeping_settings').eq('workspace_id', workspace.id).then(({ data, error }) => {
+    const userIds = memberships.map((membership) => membership.user_id);
+    const guestIds = memberships.filter((membership) => membership.role === 'guest').map((membership) => membership.user_id);
+    void Promise.all([
+      supabase.from('workspace_capabilities').select('*').eq('workspace_id', workspace.id),
+      userIds.length ? supabase.from('user_private_profiles').select('user_id, phone, address, bio').in('user_id', userIds) : Promise.resolve({ data: [], error: null }),
+      guestIds.length ? supabase.from('space_memberships').select('space_id, user_id').in('user_id', guestIds) : Promise.resolve({ data: [], error: null }),
+    ]).then(([capabilityResult, contactResult, roomResult]) => {
+      const error = capabilityResult.error ?? contactResult.error ?? roomResult.error;
       if (error) { setRoleError(error.message); return; }
-      setAttendancePermissions(Object.fromEntries((data ?? []).map((permission) => [String(permission.user_id), Boolean(permission.manage_time_entries)])));
-      setTimekeepingPermissions(Object.fromEntries((data ?? []).map((permission) => [String(permission.user_id), Boolean(permission.manage_timekeeping_settings)])));
+      setCapabilityRows(Object.fromEntries(((capabilityResult.data ?? []) as WorkspaceCapabilities[]).map((row) => [row.user_id, row])));
+      setPrivateContacts(Object.fromEntries(((contactResult.data ?? []) as UserPrivateProfile[]).map((row) => [row.user_id, row])));
+      const nextAccess: Record<string, string[]> = {};
+      for (const row of (roomResult.data ?? []) as { space_id: string; user_id: string }[]) {
+        nextAccess[row.user_id] = [...(nextAccess[row.user_id] ?? []), row.space_id];
+      }
+      setGuestRoomAccess(nextAccess);
     });
-  }, [workspace?.id]);
+  }, [memberships, workspace?.id]);
 
-  const setAttendancePermission = async (targetUserId: string, enabled: boolean) => {
+  const setCapability = async (targetUserId: string, key: keyof Omit<WorkspaceCapabilities, 'workspace_id' | 'user_id'>, enabled: boolean) => {
     if (!supabase || !workspace?.id || currentRole !== 'owner') return;
     setRoleError('');
-    const { error } = await supabase.from('workforce_permissions').upsert({
-      workspace_id: workspace.id, user_id: targetUserId, manage_time_entries: enabled,
+    const { error } = await supabase.from('workspace_capabilities').upsert({
+      workspace_id: workspace.id, user_id: targetUserId, [key]: enabled,
       granted_by: workspace.owner_id, updated_at: new Date().toISOString(),
     }, { onConflict: 'workspace_id,user_id' });
     if (error) setRoleError(error.message);
-    else setAttendancePermissions((current) => ({ ...current, [targetUserId]: enabled }));
+    else setCapabilityRows((current) => ({
+      ...current,
+      [targetUserId]: {
+        workspace_id: workspace.id,
+        user_id: targetUserId,
+        manage_members: false,
+        manage_rooms: false,
+        manage_knowledge: false,
+        manage_hr: false,
+        approve_leave: false,
+        manage_timekeeping: false,
+        correct_attendance: false,
+        manage_payroll: false,
+        approve_payroll: false,
+        view_reports: false,
+        view_audit: false,
+        ...current[targetUserId],
+        [key]: enabled,
+      },
+    }));
   };
 
-  const setTimekeepingPermission = async (targetUserId: string, enabled: boolean) => {
-    if (!supabase || !workspace?.id || currentRole !== 'owner') return;
+  const toggleGuestRoom = async (userId: string, spaceId: string, enabled: boolean) => {
+    if (!supabase || !canManageRoomAccess) return;
     setRoleError('');
-    const { error } = await supabase.from('workforce_permissions').upsert({
-      workspace_id: workspace.id, user_id: targetUserId, manage_timekeeping_settings: enabled,
-      granted_by: workspace.owner_id, updated_at: new Date().toISOString(),
-    }, { onConflict: 'workspace_id,user_id' });
-    if (error) setRoleError(error.message);
-    else setTimekeepingPermissions((current) => ({ ...current, [targetUserId]: enabled }));
+    const result = enabled
+      ? await supabase.from('space_memberships').insert({ space_id: spaceId, user_id: userId })
+      : await supabase.from('space_memberships').delete().eq('space_id', spaceId).eq('user_id', userId);
+    if (result.error) { setRoleError(result.error.message); return; }
+    setGuestRoomAccess((current) => ({
+      ...current,
+      [userId]: enabled
+        ? [...new Set([...(current[userId] ?? []), spaceId])]
+        : (current[userId] ?? []).filter((id) => id !== spaceId),
+    }));
   };
 
   return (
@@ -2622,11 +2726,11 @@ function AdminView({
             <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
-                <div><p className="text-sm font-semibold">Timekeeping permissions</p><p className={cn('text-xs leading-5', muted(theme))}>Owners may separately grant an Admin access to employee clock-in settings and to attendance record editing.</p></div>
+                <div><p className="text-sm font-semibold">Delegated capabilities</p><p className={cn('text-xs leading-5', muted(theme))}>Admins receive only the business capabilities the Owner enables. Every capability is enforced in both the interface and database.</p></div>
               </div>
             </div>
           )}
-          <InvitePanel theme={theme} onInvite={onInvite} />
+          {canManagePeople && <InvitePanel theme={theme} onInvite={onInvite} />}
         </div>
 
         <section className="xl:col-span-2">
@@ -2647,11 +2751,11 @@ function AdminView({
                           <Avatar profile={member} />
                           <span className="min-w-0 truncate text-sm font-semibold">{getProfileFullName(member)}</span>
                           <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.email ?? 'No email'}</span>
-                          <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.phone || 'No contact number'}</span>
+                          <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{privateContacts[membership.user_id]?.phone || 'No contact number'}</span>
                           <div className="grid gap-2">
                           <select
                             value={membership.role}
-                            disabled={membership.role === 'owner'}
+                            disabled={membership.role === 'owner' || !canManagePeople}
                             aria-label={`Role for ${getProfileFullName(member, 'member')}`}
                             onChange={async (event) => {
                               setRoleError('');
@@ -2665,8 +2769,8 @@ function AdminView({
                             <option value="member">Member</option>
                             <option value="guest">Guest</option>
                             </select>
-                            {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage timekeeping</span><input type="checkbox" checked={Boolean(timekeepingPermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setTimekeepingPermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
-                            {membership.role === 'admin' && <label className="flex items-center justify-between gap-2 text-xs font-semibold"><span>Manage attendance</span><input type="checkbox" checked={Boolean(attendancePermissions[membership.user_id])} disabled={currentRole !== 'owner'} onChange={(event) => void setAttendancePermission(membership.user_id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>}
+                            {membership.role === 'admin' && <details className={cn('rounded-md border px-2 py-1.5', subtleButton(theme))}><summary className="cursor-pointer text-xs font-semibold">Capabilities</summary><div className="mt-2 grid gap-2">{capabilityOptions.map((option) => <label key={option.key} className="flex items-center justify-between gap-3 text-xs"><span>{option.label}</span><input type="checkbox" checked={Boolean(capabilityRows[membership.user_id]?.[option.key])} disabled={currentRole !== 'owner'} onChange={(event) => void setCapability(membership.user_id, option.key, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>)}</div></details>}
+                            {membership.role === 'guest' && canManageRoomAccess && <details className={cn('rounded-md border px-2 py-1.5', subtleButton(theme))}><summary className="cursor-pointer text-xs font-semibold">Room access</summary><div className="mt-2 grid gap-2">{spaces.map((space) => <label key={space.id} className="flex items-center justify-between gap-3 text-xs"><span className="truncate">{space.name}</span><input type="checkbox" checked={Boolean(guestRoomAccess[membership.user_id]?.includes(space.id))} onChange={(event) => void toggleGuestRoom(membership.user_id, space.id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" /></label>)}{spaces.length === 0 && <span className={cn('text-xs', muted(theme))}>No Rooms available.</span>}</div></details>}
                           </div>
                         </div>
                       );
@@ -3282,7 +3386,7 @@ function SettingsModal({
 
         {section === 'about' && (
           <section className={cn('rounded-lg border p-5', surface(theme))}>
-            <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-10 w-10" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
+            <div className="flex items-center gap-3"><div className="flex h-12 w-24 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-8 w-20" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
             <p className={cn('mt-5 text-sm leading-7', muted(theme))}>TriCord brings conversations, project work, shared knowledge, and hub administration into one focused workspace.</p>
             <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
           </section>
@@ -3355,8 +3459,8 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
-          <TriCordLogo className="h-12 w-12" />
+        <div className="mx-auto flex h-16 w-32 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-10 w-28" />
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight">{inviteToken ? 'Accept your invite' : 'Sign in to TriCord'}</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
@@ -3424,8 +3528,8 @@ function OnboardingScreen({
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
-          <TriCordLogo className="h-12 w-12" />
+        <div className="mx-auto flex h-16 w-32 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-10 w-28" />
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight">No Hub found</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
@@ -3710,7 +3814,7 @@ async function fetchProfiles(userIds: string[]) {
 
   if (!profileResult.error) return (profileResult.data ?? []) as AppProfile[];
 
-  const missingProfileColumn = ['full_name', 'nickname', 'phone', 'address', 'bio'].some((column) => profileResult.error.message.includes(column));
+  const missingProfileColumn = ['full_name', 'nickname'].some((column) => profileResult.error.message.includes(column));
   if (!missingProfileColumn) return [];
 
   const fallbackResult = await supabase
@@ -4214,16 +4318,12 @@ async function updateProfile(
   if (basicError) throw basicError;
   if (!data) throw new Error('Your profile was not updated. Please sign in again and retry.');
 
-  const { error: detailsError } = await supabase
-    .from('users')
-    .update({
-      phone: input.phone || null,
-      address: input.address || null,
-      bio: input.bio || null,
-    })
-    .eq('id', userId);
-
-  if (detailsError && !isMissingProfileDetailsError(detailsError.message)) throw detailsError;
+  const { error: detailsError } = await supabase.rpc('save_own_private_profile', {
+    new_phone: input.phone,
+    new_address: input.address,
+    new_bio: input.bio,
+  });
+  if (detailsError) throw detailsError;
 }
 
 async function createWorkspaceInvitation(workspaceId: string, email: string, role: WorkspaceRole) {
@@ -4377,11 +4477,6 @@ function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === 'object' && error && 'message' in error) return String(error.message);
   return 'Something went wrong. Please try again.';
-}
-
-function isMissingProfileDetailsError(message: string) {
-  const normalized = message.toLowerCase();
-  return ['phone', 'address', 'bio'].some((column) => normalized.includes(column));
 }
 
 function getRoleLabel(role: WorkspaceRole) {

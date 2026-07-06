@@ -1392,8 +1392,8 @@ function Sidebar({
       >
         <div className="mb-5 flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-20 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
-              <TriCordLogo className="h-8 w-16" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+              <TriCordLogo className="h-9 w-9" />
             </div>
             <div className="min-w-0">
               <p className={cn('truncate text-xl font-bold tracking-tight', theme === 'dark' ? 'text-[#FAF9FC]' : 'text-[#17151D]')}>TriCord</p>
@@ -3386,7 +3386,7 @@ function SettingsModal({
 
         {section === 'about' && (
           <section className={cn('rounded-lg border p-5', surface(theme))}>
-            <div className="flex items-center gap-3"><div className="flex h-12 w-24 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-8 w-20" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
+            <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-9 w-9" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
             <p className={cn('mt-5 text-sm leading-7', muted(theme))}>TriCord brings conversations, project work, shared knowledge, and hub administration into one focused workspace.</p>
             <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
           </section>
@@ -3459,8 +3459,8 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-32 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
-          <TriCordLogo className="h-10 w-28" />
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-11 w-11" />
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight">{inviteToken ? 'Accept your invite' : 'Sign in to TriCord'}</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
@@ -3528,8 +3528,8 @@ function OnboardingScreen({
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-32 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
-          <TriCordLogo className="h-10 w-28" />
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-11 w-11" />
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight">No Hub found</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>

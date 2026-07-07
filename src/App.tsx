@@ -1867,8 +1867,8 @@ function ThreadPanel({
     const input = fileInputRef.current;
     if (!input) return;
     input.accept = accept;
-    if (capture) input.setAttricordte('capture', 'environment');
-    else input.removeAttricordte('capture');
+    if (capture) input.setAttribute('capture', 'environment');
+    else input.removeAttribute('capture');
     input.click();
   };
 

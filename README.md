@@ -22,6 +22,8 @@ Create `.env.local`:
 ```bash
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_ANON_KEY=your-anon-key
+# Optional. Use / for a custom root domain, /TriCord/ for GitHub project Pages.
+VITE_BASE_PATH=/
 ```
 
 ## Supabase
@@ -78,6 +80,14 @@ Open `http://localhost:3000`.
 ## Verify
 
 ```bash
+npm test
 npm run lint
 npm run build
+npm audit
 ```
+
+## Launch
+
+Before connecting a production domain or inviting external customers, complete the checklist in [`docs/launch-checklist.md`](docs/launch-checklist.md).
+
+For GitHub Pages project hosting at `https://jbo11.github.io/TriCord/`, keep `VITE_BASE_PATH=/TriCord/` in the GitHub repository variables. For a custom root domain such as `https://tricord.app/`, set `VITE_BASE_PATH=/` and update Supabase Auth redirect URLs to include the production domain.

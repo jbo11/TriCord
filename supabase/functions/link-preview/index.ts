@@ -113,10 +113,10 @@ async function readLimitedText(response: Response, limit: number) {
 function parseMetadata(html: string, pageUrl: URL) {
   const meta = new Map<string, string>();
   for (const tag of html.match(/<meta\s+[^>]*>/gi) ?? []) {
-    const attricordtes = new Map<string, string>();
-    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)) attricordtes.set(match[1].toLowerCase(), decodeHtml(match[2]));
-    const key = (attricordtes.get('property') ?? attricordtes.get('name') ?? '').toLowerCase();
-    const content = attricordtes.get('content');
+    const attributes = new Map<string, string>();
+    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)) attributes.set(match[1].toLowerCase(), decodeHtml(match[2]));
+    const key = (attributes.get('property') ?? attributes.get('name') ?? '').toLowerCase();
+    const content = attributes.get('content');
     if (key && content) meta.set(key, content);
   }
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);

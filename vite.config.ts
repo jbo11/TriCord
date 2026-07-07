@@ -4,8 +4,10 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const base = process.env.VITE_BASE_PATH || (process.env.GITHUB_PAGES === 'true' ? '/TriCord/' : '/');
+
   return {
-    base: process.env.GITHUB_PAGES === 'true' ? '/TriCord/' : '/',
+    base,
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

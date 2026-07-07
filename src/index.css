@@ -33,6 +33,25 @@
     overflow: hidden;
   }
 
+
+  html.marketing-page {
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #f7f5f2;
+  }
+
+  html.marketing-page body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #f7f5f2;
+  }
+
+  html.marketing-page #root {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   button,
   input,
   textarea,

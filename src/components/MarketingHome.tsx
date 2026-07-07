@@ -19,12 +19,16 @@ import triCordLogo from '../assets/tricord-logo.png';
 export function MarketingHome({ appUrl }: { appUrl: string }) {
   useEffect(() => {
     const previousTitle = document.title;
+    document.documentElement.classList.add('marketing-page');
+    document.body.classList.add('marketing-page');
     const meta = ensureMetaDescription();
     const previousDescription = meta.getAttribute('content') ?? '';
     document.title = 'TriCord | Conversations, tasks, knowledge, and operations in one hub';
     meta.setAttribute('content', 'TriCord is a modern collaboration hub for teams that need focused discussions, task tracking, knowledge, timekeeping, HR, payroll previews, and reports in one place.');
     return () => {
       document.title = previousTitle;
+      document.documentElement.classList.remove('marketing-page');
+      document.body.classList.remove('marketing-page');
       meta.setAttribute('content', previousDescription);
     };
   }, []);

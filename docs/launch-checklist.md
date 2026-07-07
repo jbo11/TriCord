@@ -21,6 +21,8 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 - Add the correct DNS records from the host dashboard.
 - Set the GitHub repository variable `VITE_BASE_PATH=/` for a custom root domain.
 - Keep `VITE_BASE_PATH=/TriCord/` only while serving from `https://jbo11.github.io/TriCord/`.
+- Confirm `https://tricord.app/` loads the marketing homepage and `https://tricord.app/app` opens the application sign-in flow.
+- Confirm deep links under `/app` work after a hard refresh; the included static `404.html` fallback restores SPA routes for static hosts.
 - After DNS is active, confirm HTTPS is enforced.
 
 ### GitHub Actions
@@ -34,8 +36,9 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 
 ### Supabase Auth
 
-- Set the Site URL to the production domain.
+- Set the Site URL to `https://tricord.app/app` so magic links return to the application.
 - Add redirect URLs for:
+  - `https://tricord.app/app`
   - `https://tricord.app/*`
   - The current GitHub Pages URL while it remains active.
   - Local development URLs such as `http://localhost:3000/*`.

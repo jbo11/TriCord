@@ -62,6 +62,7 @@ import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { canOpenView, hasWorkspaceCapability } from './lib/permissions';
 import { WorkforceModule } from './components/workforce/WorkforceModules';
+import { MarketingHome } from './components/MarketingHome';
 import triCordLogo from './assets/tricord-logo.png';
 import {
   AppComment,
@@ -118,6 +119,7 @@ const THEME_STORAGE_KEY = 'tricord_theme';
 const CHAT_OPEN_STORAGE_KEY = 'tricord_chat_open';
 const ACCENT_STORAGE_KEY = 'tricord_accent';
 const WORKSPACE_STORAGE_KEY = 'tricord_workspace_id';
+const ROUTE_REDIRECT_STORAGE_KEY = 'tricord_redirect_path';
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
 type AccentColor = 'tangerine' | 'violet' | 'blue' | 'teal' | 'rose';
@@ -147,6 +149,7 @@ interface HubSetup { name: string; countryCode: string; currencyCode: string; lo
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [accentColor, setAccentColor] = useState<AccentColor>(getInitialAccentColor);
+  const [routeKey, setRouteKey] = useState(getInitialRouteKey);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [view, setView] = useState<ViewMode>('feed');
@@ -214,6 +217,18 @@ export default function App() {
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [profiles],
   );
+  const appUrl = getAppUrl();
+  const marketingHome = isMarketingHomeRoute(inviteToken, routeKey);
+
+  useEffect(() => {
+    const updateRoute = () => setRouteKey(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+    window.addEventListener('popstate', updateRoute);
+    window.addEventListener('tricord:navigate', updateRoute);
+    return () => {
+      window.removeEventListener('popstate', updateRoute);
+      window.removeEventListener('tricord:navigate', updateRoute);
+    };
+  }, []);
 
   useEffect(() => {
     selectedPostIdRef.current = selectedPost?.id ?? '';
@@ -674,6 +689,10 @@ export default function App() {
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
     : visiblePosts.filter((post) => post.space_id === activeSpaceId);
+
+  if (marketingHome) {
+    return <MarketingHome appUrl={appUrl} />;
+  }
 
   if (!isSupabaseConfigured) {
     return <SetupScreen theme={theme} setTheme={setTheme} />;
@@ -4336,7 +4355,7 @@ async function createWorkspaceInvitation(workspaceId: string, email: string, rol
 
   if (error) throw error;
 
-  const url = new URL(window.location.href);
+  const url = new URL(getAppUrl(), window.location.origin);
   url.hash = '';
   url.search = '';
   url.searchParams.set('invite', String(data));
@@ -4433,6 +4452,41 @@ function getCommentsSignature(comments: Pick<AppComment, 'id' | 'updated_at'>[])
 
 function clampThreadWidth(width: number) {
   return Math.round(Math.min(50, Math.max(20, width)) * 10) / 10;
+}
+
+
+function getInitialRouteKey() {
+  if (typeof window === 'undefined') return '';
+  const redirectedPath = window.sessionStorage.getItem(ROUTE_REDIRECT_STORAGE_KEY);
+  if (redirectedPath) {
+    window.sessionStorage.removeItem(ROUTE_REDIRECT_STORAGE_KEY);
+    window.history.replaceState({}, '', redirectedPath);
+  }
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function getBasePath() {
+  const base = import.meta.env.BASE_URL || '/';
+  return base.endsWith('/') ? base : `${base}/`;
+}
+
+function getAppUrl() {
+  return `${getBasePath()}app`;
+}
+
+function stripBasePath(pathname: string) {
+  const base = getBasePath();
+  if (base !== '/' && pathname.startsWith(base)) {
+    return pathname.slice(base.length).replace(/^\/+/, '');
+  }
+  return pathname.replace(/^\/+/, '');
+}
+
+function isMarketingHomeRoute(inviteToken: string, routeKey = '') {
+  void routeKey;
+  if (inviteToken) return false;
+  const path = stripBasePath(window.location.pathname).replace(/\/+$/, '');
+  return path === '';
 }
 
 function getInitialTheme(): 'light' | 'dark' {

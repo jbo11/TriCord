@@ -1,6 +1,6 @@
 # TriCord
 
-TriCord is a production-oriented collaborative hub organized around posts instead of channels. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
+TriCord is a production-oriented collaborative hub organized around posts instead of channels. The root route is now a conversion-focused marketing website, while the application runs under `/app`. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
 
 ## Current Scope
 
@@ -75,7 +75,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` for the marketing homepage. Use `http://localhost:3000/app` for the TriCord application.
 
 ## Verify
 
@@ -90,4 +90,4 @@ npm audit
 
 Before connecting a production domain or inviting external customers, complete the checklist in [`docs/launch-checklist.md`](docs/launch-checklist.md).
 
-For GitHub Pages project hosting at `https://jbo11.github.io/TriCord/`, keep `VITE_BASE_PATH=/TriCord/` in the GitHub repository variables. For a custom root domain such as `https://tricord.app/`, set `VITE_BASE_PATH=/` and update Supabase Auth redirect URLs to include the production domain.
+For GitHub Pages project hosting at `https://jbo11.github.io/TriCord/`, keep `VITE_BASE_PATH=/TriCord/` in the GitHub repository variables. For a custom root domain such as `https://tricord.app/`, set `VITE_BASE_PATH=/`. Configure Supabase Auth Site URL and production redirects to `https://tricord.app/app` and `https://tricord.app/*` so magic links land in the application instead of the marketing homepage.

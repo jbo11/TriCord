@@ -7,12 +7,15 @@
     <script>
       (function () {
         var redirect = window.location.pathname + window.location.search + window.location.hash;
+        var firstSegment = window.location.pathname.split('/').filter(Boolean)[0] || '';
+        var rootRoutes = ['app', 'privacy', 'terms', 'acceptable-use', 'refund', 'subprocessors', 'security', 'accessibility'];
+        var basePath = firstSegment && rootRoutes.indexOf(firstSegment) === -1 ? '/' + firstSegment + '/' : '/';
         try {
           window.sessionStorage.setItem('tricord_redirect_path', redirect);
         } catch (error) {
           // Ignore private browsing storage failures.
         }
-        window.location.replace('/');
+        window.location.replace(basePath);
       })();
     </script>
   </head>

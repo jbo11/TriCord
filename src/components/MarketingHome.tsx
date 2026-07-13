@@ -47,14 +47,15 @@ export function MarketingHome({ appUrl }: { appUrl: string }) {
     window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
-  const marketingPage = getMarketingPage();
+  const marketingBasePath = getMarketingBasePath(appUrl);
+  const marketingPage = getMarketingPage(marketingBasePath);
 
   if (marketingPage !== 'home') {
     return (
       <div className="min-h-screen bg-[#F7F5F2] text-[#17151D] antialiased">
-        <MarketingHeader appUrl={appUrl} onLaunch={launchApp} />
-        <main><LegalPage page={marketingPage} appUrl={appUrl} onLaunch={launchApp} /></main>
-        <MarketingFooter appUrl={appUrl} onLaunch={launchApp} />
+        <MarketingHeader appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} />
+        <main><LegalPage page={marketingPage} appUrl={appUrl} homeUrl={marketingBasePath || '/'} onLaunch={launchApp} /></main>
+        <MarketingFooter appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} />
       </div>
     );
   }
@@ -62,7 +63,7 @@ export function MarketingHome({ appUrl }: { appUrl: string }) {
   return (
     <div className="min-h-screen bg-[#F7F5F2] text-[#17151D] antialiased">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold">Skip to content</a>
-      <MarketingHeader appUrl={appUrl} onLaunch={launchApp} />
+      <MarketingHeader appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} />
       <main id="main">
         <Hero appUrl={appUrl} onLaunch={launchApp} />
         <OutcomeStrip />
@@ -79,22 +80,24 @@ export function MarketingHome({ appUrl }: { appUrl: string }) {
         <FAQ />
         <FinalCTA appUrl={appUrl} onLaunch={launchApp} />
       </main>
-      <MarketingFooter appUrl={appUrl} onLaunch={launchApp} />
+      <MarketingFooter appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} />
     </div>
   );
 }
 
-function MarketingHeader({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+function MarketingHeader({ appUrl, marketingBasePath, onLaunch }: { appUrl: string; marketingBasePath: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+  const homeHref = marketingBasePath || '/';
+  const sectionHref = (id: string) => joinMarketingPath(marketingBasePath, `#${id}`);
   return (
     <header className="sticky top-0 z-40 border-b border-[#E5DED4]/80 bg-[#FFFDF9]/88 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <a href="#top" className="flex items-center gap-3" aria-label="TriCord home"><BrandMark /><span className="text-xl font-extrabold">TriCord</span></a>
+        <a href={homeHref} className="flex items-center gap-3" aria-label="TriCord home"><BrandMark /><span className="text-xl font-extrabold">TriCord</span></a>
         <nav aria-label="Main navigation" className="hidden items-center gap-7 text-sm font-semibold text-[#5F5668] lg:flex">
-          <a className="hover:text-[#17151D]" href="#features">Features</a>
-          <a className="hover:text-[#17151D]" href="#tour">Tour</a>
-          <a className="hover:text-[#17151D]" href="#workflow">Workflow</a>
-          <a className="hover:text-[#17151D]" href="#pricing">Pricing</a>
-          <a className="hover:text-[#17151D]" href="#security">Security</a>
+          <a className="hover:text-[#17151D]" href={sectionHref('features')}>Features</a>
+          <a className="hover:text-[#17151D]" href={sectionHref('tour')}>Tour</a>
+          <a className="hover:text-[#17151D]" href={sectionHref('workflow')}>Workflow</a>
+          <a className="hover:text-[#17151D]" href={sectionHref('pricing')}>Pricing</a>
+          <a className="hover:text-[#17151D]" href={sectionHref('security')}>Security</a>
         </nav>
         <div className="flex items-center gap-2">
           <a href={appUrl} onClick={onLaunch} className="hidden rounded-lg px-4 py-2 text-sm font-bold text-[#5F5668] hover:text-[#17151D] sm:inline-flex">Sign in</a>
@@ -366,8 +369,9 @@ function FinalCTA({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: Mous
   return <section className="bg-[#F97316] py-16 text-[#431407]"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 sm:px-6 lg:flex-row lg:items-center lg:px-8"><div><h2 className="text-3xl font-black tracking-normal sm:text-4xl">Give your team one place to work from.</h2><p className="mt-3 max-w-2xl text-lg leading-8 text-[#5B1B06]">Start a Hub, invite your team, and see how much smoother work feels when the conversation and execution stay connected.</p></div><a href={appUrl} onClick={onLaunch} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-5 text-sm font-bold text-white shadow-lg shadow-[#431407]/18 transition hover:-translate-y-0.5">Start Free <ArrowRight className="h-4 w-4" /></a></div></section>;
 }
 
-function MarketingFooter({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
-  return <footer className="bg-[#17151D] py-12 text-white"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 md:grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] lg:px-8"><div><div className="flex items-center gap-3"><BrandMark /><span className="text-xl font-black">TriCord</span></div><p className="mt-4 max-w-sm text-sm leading-6 text-white/62">A modern work hub for conversations, projects, SOPs, and everyday business operations.</p><p className="mt-4 text-sm text-white/62">Contact: hello@tricord.cc</p></div><FooterColumn title="Product" links={[["Features", '#features'], ['Tour', '#tour'], ['Pricing', '#pricing'], ['Get started', appUrl]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Resources" links={[["Workflow", '#workflow'], ['Security', '#security'], ['FAQ', '#faq'], ['Help center', '#faq']]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Legal" links={[["Privacy", '/privacy'], ['Terms', '/terms'], ['Acceptable Use', '/acceptable-use'], ['Refund Policy', '/refund'], ['Subprocessors', '/subprocessors'], ['Security', '/security'], ['Accessibility', '/accessibility']]} onLaunch={onLaunch} appUrl={appUrl} /></div><div className="mx-auto mt-10 flex max-w-7xl flex-col gap-3 border-t border-white/10 px-4 pt-6 text-xs text-white/50 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8"><p>© {new Date().getFullYear()} TriCord. All rights reserved.</p><p>TriCord helps organize business operations. Review local HR and payroll requirements before replacing regulated systems.</p></div></footer>;
+function MarketingFooter({ appUrl, marketingBasePath, onLaunch }: { appUrl: string; marketingBasePath: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+  const legalHref = (page: keyof typeof legalContent) => joinMarketingPath(marketingBasePath, page);
+  return <footer className="bg-[#17151D] py-12 text-white"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 md:grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] lg:px-8"><div><div className="flex items-center gap-3"><BrandMark /><span className="text-xl font-black">TriCord</span></div><p className="mt-4 max-w-sm text-sm leading-6 text-white/62">A modern work hub for conversations, projects, SOPs, and everyday business operations.</p><p className="mt-4 text-sm text-white/62">Contact: hello@tricord.cc</p></div><FooterColumn title="Product" links={[["Features", joinMarketingPath(marketingBasePath, '#features')], ['Tour', joinMarketingPath(marketingBasePath, '#tour')], ['Pricing', joinMarketingPath(marketingBasePath, '#pricing')], ['Get started', appUrl]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Resources" links={[["Workflow", joinMarketingPath(marketingBasePath, '#workflow')], ['Security', joinMarketingPath(marketingBasePath, '#security')], ['FAQ', joinMarketingPath(marketingBasePath, '#faq')], ['Help center', joinMarketingPath(marketingBasePath, '#faq')]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Legal" links={[["Privacy", legalHref('privacy')], ['Terms', legalHref('terms')], ['Acceptable Use', legalHref('acceptable-use')], ['Refund Policy', legalHref('refund')], ['Subprocessors', legalHref('subprocessors')], ['Security', legalHref('security')], ['Accessibility', legalHref('accessibility')]]} onLaunch={onLaunch} appUrl={appUrl} /></div><div className="mx-auto mt-10 flex max-w-7xl flex-col gap-3 border-t border-white/10 px-4 pt-6 text-xs text-white/50 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8"><p>© {new Date().getFullYear()} TriCord. All rights reserved.</p><p>TriCord helps organize business operations. Review local HR and payroll requirements before replacing regulated systems.</p></div></footer>;
 }
 
 function MarketingButton({ href, onClick, children }: { href: string; onClick: (event: MouseEvent<HTMLAnchorElement>) => void; children: ReactNode }) {
@@ -496,15 +500,31 @@ const legalContent = {
   },
 } as const;
 
-function LegalPage({ page, appUrl, onLaunch }: { page: keyof typeof legalContent; appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+function LegalPage({ page, appUrl, homeUrl, onLaunch }: { page: keyof typeof legalContent; appUrl: string; homeUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
   const content = legalContent[page];
-  return <section className="bg-[#F7F5F2] py-16 sm:py-20"><div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"><a href="/" className="text-sm font-bold text-[#C2410C] hover:text-[#17151D]">Back to home</a><p className="mt-10 text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">{content.eyebrow}</p><h1 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">{content.title}</h1><p className="mt-3 text-sm font-semibold text-[#7A7183]">{content.updated}</p><p className="mt-6 text-lg leading-8 text-[#635B6C]">{content.intro}</p><div className="mt-10 space-y-5">{content.sections.map(([title, body]) => <article key={title} className="rounded-2xl border border-[#E5DED4] bg-white p-6 shadow-sm"><h2 className="text-xl font-black">{title}</h2><p className="mt-3 leading-7 text-[#635B6C]">{body}</p></article>)}</div><div className="mt-10 rounded-2xl bg-[#17151D] p-6 text-white"><h2 className="text-2xl font-black">Ready to try TriCord?</h2><p className="mt-2 text-white/70">Open the app, create a Hub, and keep your team work organized in one place.</p><a href={appUrl} onClick={onLaunch} className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-black text-[#431407]">Start Free</a></div></div></section>;
+  return <section className="bg-[#F7F5F2] py-16 sm:py-20"><div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"><a href={homeUrl} className="text-sm font-bold text-[#C2410C] hover:text-[#17151D]">Back to home</a><p className="mt-10 text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">{content.eyebrow}</p><h1 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">{content.title}</h1><p className="mt-3 text-sm font-semibold text-[#7A7183]">{content.updated}</p><p className="mt-6 text-lg leading-8 text-[#635B6C]">{content.intro}</p><div className="mt-10 space-y-5">{content.sections.map(([title, body]) => <article key={title} className="rounded-2xl border border-[#E5DED4] bg-white p-6 shadow-sm"><h2 className="text-xl font-black">{title}</h2><p className="mt-3 leading-7 text-[#635B6C]">{body}</p></article>)}</div><div className="mt-10 rounded-2xl bg-[#17151D] p-6 text-white"><h2 className="text-2xl font-black">Ready to try TriCord?</h2><p className="mt-2 text-white/70">Open the app, create a Hub, and keep your team work organized in one place.</p><a href={appUrl} onClick={onLaunch} className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-black text-[#431407]">Start Free</a></div></div></section>;
 }
 
-function getMarketingPage(): 'home' | keyof typeof legalContent {
-  const path = window.location.pathname.replace(/\/+$/, '').replace(/^\/+/, '');
+function getMarketingPage(marketingBasePath: string): 'home' | keyof typeof legalContent {
+  const base = marketingBasePath.replace(/\/+$/, '').replace(/^\/+/, '');
+  let path = window.location.pathname.replace(/\/+$/, '').replace(/^\/+/, '');
+  if (base && (path === base || path.startsWith(`${base}/`))) {
+    path = path.slice(base.length).replace(/^\/+/, '');
+  }
   if (path in legalContent) return path as keyof typeof legalContent;
   return 'home';
+}
+
+function getMarketingBasePath(appUrl: string) {
+  const appPath = appUrl.split(/[?#]/)[0]?.replace(/\/+$/, '') || '/app';
+  const base = appPath.endsWith('/app') ? appPath.slice(0, -4) : '';
+  return base || '/';
+}
+
+function joinMarketingPath(basePath: string, pageOrHash: keyof typeof legalContent | `#${string}`) {
+  const base = basePath === '/' ? '' : basePath.replace(/\/+$/, '');
+  if (pageOrHash.startsWith('#')) return `${base || '/'}${pageOrHash}`;
+  return `${base}/${pageOrHash}`;
 }
 
 function FooterColumn({ title, links, onLaunch, appUrl }: { title: string; links: [string, string][]; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void; appUrl: string }) {

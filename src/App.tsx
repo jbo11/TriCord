@@ -131,6 +131,8 @@ const GOOGLE_DRIVE_API_KEY = (import.meta.env.VITE_GOOGLE_API_KEY as string | un
 const GOOGLE_DRIVE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim();
 const GOOGLE_DRIVE_PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
 const INBOUND_EMAIL_DOMAIN = ((import.meta.env.VITE_INBOUND_EMAIL_DOMAIN as string | undefined)?.trim() || 'room.tricord.cc').replace(/^@/, '').replace(/\/$/, '').toLowerCase();
+const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL || '/';
+const USER_GUIDE_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.pdf`;
 const googleScriptPromises = new Map<string, Promise<void>>();
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
@@ -2989,11 +2991,11 @@ function KnowledgeView({
         <button onClick={onCreate} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New article</button>
       </div>
       {visibleArticles.length === 0 ? (
-        <div className={cn('rounded-lg border p-6', surface(theme))}><h3 className="font-bold">Start with the TriCord User Guide</h3><p className={cn('mt-2 text-sm leading-6', muted(theme))}>The complete PDF guide is available to every user. Create additional articles for your own guides, FAQs, best practices, troubleshooting steps, and procedures.</p><div className="mt-4 flex flex-wrap gap-2"><a href="/tricord-user-guide.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open user guide</a><button onClick={onCreate} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Create article</button></div></div>
+        <div className={cn('rounded-lg border p-6', surface(theme))}><h3 className="font-bold">Start with the TriCord User Guide</h3><p className={cn('mt-2 text-sm leading-6', muted(theme))}>The complete PDF guide is available to every user. Create additional articles for your own guides, FAQs, best practices, troubleshooting steps, and procedures.</p><div className="mt-4 flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open user guide</a><button onClick={onCreate} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Create article</button></div></div>
       ) : (
         <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.5fr)]">
           <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1 scroll-area">
-            <a href="/tricord-user-guide.pdf" target="_blank" rel="noreferrer" className={cn('block w-full rounded-lg border p-4 text-left transition', surface(theme))}>
+            <a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className={cn('block w-full rounded-lg border p-4 text-left transition', surface(theme))}>
               <span className={cn('text-xs font-semibold uppercase tracking-[0.12em]', muted(theme))}>{getKnowledgeCategoryLabel(userGuide.category)}</span>
               <span className="mt-2 block font-bold">{userGuide.title}</span>
               <span className={cn('mt-1 block line-clamp-2 text-sm', muted(theme))}>{userGuide.summary}</span>
@@ -3997,7 +3999,7 @@ function SettingsModal({
         {section === 'help' && (
           <div className="grid gap-4 lg:grid-cols-3">
             <section className={cn('rounded-lg border p-4 lg:col-span-3', surface(theme))}>
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete guide for Free, Plus, and Pro users.</p></div><a href="/tricord-user-guide.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete guide for Free, Plus, and Pro users.</p></div><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a></div>
             </section>
             <HelpTopic title="Active Feed and discussions" body="Create focused posts inside Rooms, keep replies attached to the original topic, add reactions, forward selected messages, archive outcomes, and reopen the side discussion panel from a post when needed." theme={theme} />
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />

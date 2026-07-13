@@ -5423,11 +5423,13 @@ function stripBasePath(pathname: string) {
   return pathname.replace(/^\/+/, '');
 }
 
+const MARKETING_PAGE_ROUTES = new Set(['', 'privacy', 'terms', 'acceptable-use', 'refund', 'subprocessors', 'security', 'accessibility']);
+
 function isMarketingHomeRoute(inviteToken: string, routeKey = '') {
   void routeKey;
   if (inviteToken) return false;
   const path = stripBasePath(window.location.pathname).replace(/\/+$/, '');
-  return path === '' || path === 'terms' || path === 'privacy';
+  return MARKETING_PAGE_ROUTES.has(path);
 }
 
 function getInitialTheme(): 'light' | 'dark' {

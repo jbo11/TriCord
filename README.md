@@ -13,7 +13,7 @@ TriCord is a production-oriented collaborative hub organized around posts instea
 - Task, knowledge, and admin shells connected to the production data model.
 - Strict page layout where only the feed list and thread activity panel scroll.
 
-The AI layer is intentionally not active yet. The database remains ready for future AI work, but no AI provider keys or demo agent content are required for this build.
+AI is intentionally removed from this release. Placeholder planning remains in documentation only; no AI provider keys, agent tables, or active AI workflows are required for this build.
 
 ## Environment
 
@@ -22,7 +22,7 @@ Create `.env.local`:
 ```bash
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_ANON_KEY=your-anon-key
-# Optional. Use / for a custom root domain, /TriCord/ for GitHub project Pages.
+# Optional. Use / for the production root domain.
 VITE_BASE_PATH=/
 ```
 
@@ -90,4 +90,4 @@ npm audit
 
 Before connecting a production domain or inviting external customers, complete the checklist in [`docs/launch-checklist.md`](docs/launch-checklist.md).
 
-For GitHub Pages project hosting at `https://jbo11.github.io/TriCord/`, keep `VITE_BASE_PATH=/TriCord/` in the GitHub repository variables. For a custom root domain such as `https://tricord.app/`, set `VITE_BASE_PATH=/`. Configure Supabase Auth Site URL and production redirects to `https://tricord.app/app` and `https://tricord.app/*` so magic links land in the application instead of the marketing homepage.
+For GitHub Pages at `https://jbo11.github.io/TriCord/`, the included workflow builds with `VITE_BASE_PATH=/TriCord/` and deploys the `dist/` artifact automatically after pushes to `main`. Configure Supabase Auth Site URL and production redirects to `https://jbo11.github.io/TriCord/app` and `https://jbo11.github.io/TriCord/*` so magic links land in the application instead of the marketing homepage. For a future custom root-domain static host, set `VITE_BASE_PATH=/` before building and update the Supabase redirects to that domain.

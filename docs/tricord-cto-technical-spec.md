@@ -10,7 +10,7 @@ Core product rules:
 - Replies, files, tasks, decisions, and summaries live inside the post.
 - Recent activity bumps posts to the top of the active feed.
 - Rooms provide access boundaries without recreating channel clutter.
-- The data model is ready for a future auditable AI layer, but AI is not active in the current app.
+- AI is removed from this release. Future AI should be introduced by a new migration and provider adapter after core workflows are stable.
 
 ## 2. System Architecture
 
@@ -18,7 +18,7 @@ Production target:
 
 - Frontend: Next.js 15, React, TypeScript, TailwindCSS, ShadCN UI, Framer Motion.
 - Backend: Supabase Postgres, Supabase Auth, Supabase Realtime, Supabase Storage, Edge Functions.
-- Future AI: provider adapter layer to be implemented after the core collaboration workflows are stable.
+- Future automation/AI placeholder: provider adapter layer to be designed after the core collaboration workflows are stable.
 - Search: Postgres full-text search first, pgvector semantic search second.
 - Payments: Stripe subscriptions, checkout, customer portal, webhooks.
 - Email: Resend transactional email and digests.
@@ -48,8 +48,7 @@ Primary entities:
 - `reactions`: post and comment reactions.
 - `attachments`: Supabase Storage metadata and versions.
 - `tasks`: work created from posts or comments.
-- `ai_agents`: provider, model, instructions, permissions, memory profile.
-- `ai_messages`: auditable agent prompt/response records.
+- Future AI placeholders: no active AI tables are deployed in this release.
 - `notifications`: in-app notification stream.
 - `subscriptions`, `billing_events`: Stripe state.
 - `activity_logs`, `audit_logs`: operational and security records.
@@ -59,7 +58,7 @@ Indexes:
 - Hub and room feed indexes by `last_activity_at`.
 - GIN full-text indexes on posts and comments.
 - IVFFlat vector indexes for semantic search.
-- Notification, task, activity, audit, and future AI-message lookup indexes.
+- Notification, task, activity, and audit lookup indexes.
 
 ## 4. Permission Model
 
@@ -78,7 +77,7 @@ Access is evaluated in this order:
 2. Room visibility or membership.
 3. Content state: open, read-only, locked, archived.
 
-Future AI workers must inherit hub and room visibility. They cannot invite users, manage billing, alter settings, or escalate permissions.
+Future AI workers, if added later, must inherit hub and room visibility. They cannot invite users, manage billing, alter settings, or escalate permissions.
 
 ## 5. API Design
 
@@ -195,7 +194,7 @@ Stripe integration:
 - Checkout for upgrades.
 - Customer portal for plan changes and invoices.
 - Webhooks write `subscriptions` and `billing_events`.
-- Future AI usage quotas should be enforced by hub plan and monthly usage counters.
+- Future AI usage quotas, if introduced later, should be enforced by hub plan and monthly usage counters.
 
 ## 11. Security Model
 
@@ -386,7 +385,7 @@ PostHog:
 
 - Activation: hub created, first post, first comment, first invite.
 - Collaboration: active posts, reply rate, decision logs.
-- Future AI: dispatch rate, completion latency, accepted outputs.
+- Future AI, if introduced later: dispatch rate, completion latency, accepted outputs.
 - Retention: weekly active hubs, search usage, notification opens.
 
 Operational alerts:
@@ -425,4 +424,4 @@ Scale target:
 - Tens of thousands of users.
 - Millions of posts and comments.
 - Active feed queries under 200 ms at p95 with indexes and pagination.
-- Future AI jobs processed asynchronously with quota and retry controls.
+- Future AI jobs, if introduced later, should be processed asynchronously with quota and retry controls.

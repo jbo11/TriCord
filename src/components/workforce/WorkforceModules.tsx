@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, Clock3, Coffee, FileUp,
-  Gauge, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Users,
-  Trash2,
+  Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, Clock3, Coffee, ExternalLink, FileUp,
+  Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Users,
+  Trash2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../lib/utils';
@@ -10,6 +10,9 @@ import type { AppMembership, AppProfile, ViewMode, WorkspaceCapabilities, Worksp
 
 type Theme = 'light' | 'dark';
 type WorkforceView = Extract<ViewMode, 'timekeeping' | 'hr' | 'payroll' | 'reports'>;
+
+const MAX_WORKFORCE_UPLOAD_BYTES = 20 * 1024 * 1024;
+const BLOCKED_WORKFORCE_FILE_EXTENSIONS = new Set(['ade', 'adp', 'apk', 'app', 'bat', 'bin', 'cmd', 'com', 'cpl', 'dll', 'dmg', 'exe', 'gadget', 'hta', 'ins', 'iso', 'jar', 'js', 'jse', 'lib', 'lnk', 'mde', 'msc', 'msi', 'msp', 'mst', 'osx', 'pif', 'ps1', 'scr', 'sh', 'sys', 'vb', 'vbe', 'vbs', 'vxd', 'ws', 'wsc', 'wsf', 'wsh']);
 
 interface WorkforceProps {
   view: WorkforceView;
@@ -20,6 +23,7 @@ interface WorkforceProps {
   memberships: AppMembership[];
   capabilities: WorkspaceCapabilities | null;
   theme: Theme;
+  premiumFeatures: boolean;
   onNotice: (message: string) => void;
 }
 
@@ -34,6 +38,13 @@ interface EmployeeProfile {
 interface TimeEntry {
   id: string; workspace_id: string; employee_profile_id: string; work_date: string;
   clock_in: string; clock_out: string | null; break_started_at: string | null; break_seconds: number;
+}
+
+interface TimeEvent {
+  id: string; workspace_id: string; employee_profile_id: string; time_entry_id: string;
+  event_type: 'clock_in' | 'clock_out' | 'break_start' | 'break_end'; occurred_at: string;
+  latitude: number | null; longitude: number | null; map_url: string | null; ip_address: string | null;
+  device_information: string | null; selfie_path: string | null; distance_from_office_meters: number | null;
 }
 
 interface TimekeepingSettings {
@@ -61,12 +72,24 @@ interface WorkforceSettings {
 }
 
 interface LeaveType { id: string; name: string; code: string; paid: boolean; annual_allowance: number }
-interface LeaveRequest { id: string; employee_profile_id: string; leave_type_id: string; start_date: string; end_date: string; days: number; reason: string | null; status: string; created_at: string }
+interface LeaveRequest { id: string; workspace_id: string; employee_profile_id: string; leave_type_id: string; start_date: string; end_date: string; days: number; reason: string | null; status: string; created_at: string }
 interface LeaveBalance { id: string; employee_profile_id: string; leave_type_id: string; year: number; allocated: number; used: number }
 interface PayrollPeriod { id: string; name: string; period_start: string; period_end: string; pay_date: string; status: string; currency_code: string }
 interface PayrollItem { id: string; payroll_period_id: string; employee_profile_id: string; regular_hours: number; overtime_hours: number; gross_pay: number; deductions: number; net_pay: number }
 interface PayrollRule { id: string; name: string; rule_kind: 'earning' | 'deduction'; calculation_type: 'fixed' | 'percentage'; value: number; country_code: string | null; active: boolean }
 interface WorkforceHoliday { id: string; holiday_date: string; name: string; country_code: string | null; paid: boolean }
+interface RecordChangeRequest {
+  id: string; workspace_id: string; employee_profile_id: string; target_table: 'employee_documents' | 'performance_records';
+  target_id: string; request_type: 'delete' | 'replace' | 'update'; details: string | null; status: string;
+  requested_by: string; reviewed_by: string | null; reviewed_at: string | null; created_at: string;
+}
+
+interface WorkforceConfirmState {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<void>;
+}
 
 export function WorkforceModule(props: WorkforceProps) {
   if (props.view === 'timekeeping') return <TimekeepingPage {...props} />;
@@ -75,31 +98,37 @@ export function WorkforceModule(props: WorkforceProps) {
   return <ReportsPage {...props} />;
 }
 
-function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, theme, onNotice }: WorkforceProps) {
+function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, theme, premiumFeatures, onNotice }: WorkforceProps) {
   const [employee, setEmployee] = useState<EmployeeProfile | null>(null);
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [events, setEvents] = useState<TimeEvent[]>([]);
+  const [expandedEvidenceEntryId, setExpandedEvidenceEntryId] = useState('');
   const [policies, setPolicies] = useState<EmployeeTimekeepingPolicy[]>([]);
   const [selectedPolicyEmployeeId, setSelectedPolicyEmployeeId] = useState('');
   const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
   const selfieRef = useRef<HTMLInputElement | null>(null);
-  const canConfigure = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_timekeeping));
+  const canConfigure = premiumFeatures && (role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_timekeeping)));
+  const canSeePremiumPolicyNotice = !premiumFeatures && role === 'owner';
   const canClock = role === 'admin' || role === 'member';
   const canManageEntries = role === 'owner' || (role === 'admin' && Boolean(capabilities?.correct_attendance));
+  const canViewEvidence = role === 'owner' || (role === 'admin' && Boolean(capabilities?.correct_attendance || capabilities?.manage_timekeeping));
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [employeeResult, employeesResult, entriesResult, policiesResult] = await Promise.all([
+    const [employeeResult, employeesResult, entriesResult, eventsResult, policiesResult] = await Promise.all([
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId),
       supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).order('clock_in', { ascending: false }).limit(50),
+      supabase.from('time_events').select('*').eq('workspace_id', workspaceId).order('occurred_at', { ascending: false }).limit(250),
       supabase.from('employee_timekeeping_policies').select('*').eq('workspace_id', workspaceId),
     ]);
-    if (employeeResult.error || employeesResult.error || entriesResult.error || policiesResult.error) {
-      onNotice(employeeResult.error?.message ?? employeesResult.error?.message ?? entriesResult.error?.message ?? policiesResult.error?.message ?? 'Timekeeping could not be loaded.');
+    if (employeeResult.error || employeesResult.error || entriesResult.error || eventsResult.error || policiesResult.error) {
+      onNotice(employeeResult.error?.message ?? employeesResult.error?.message ?? entriesResult.error?.message ?? eventsResult.error?.message ?? policiesResult.error?.message ?? 'Timekeeping could not be loaded.');
       return;
     }
     const ownEmployee = employeeResult.data as EmployeeProfile | null;
@@ -108,6 +137,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     setEmployee(ownEmployee);
     setEmployees(nextEmployees);
     setEntries((entriesResult.data ?? []) as TimeEntry[]);
+    setEvents((eventsResult.data ?? []) as TimeEvent[]);
     setPolicies(nextPolicies);
     if (canConfigure) {
       setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
@@ -128,12 +158,20 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     if (!supabase) return;
     const channel = supabase.channel(`workforce-time-${workspaceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries', filter: `workspace_id=eq.${workspaceId}` }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'time_events', filter: `workspace_id=eq.${workspaceId}` }, () => void load())
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
   }, [load, workspaceId]);
 
   const ownEntries = entries.filter((entry) => entry.employee_profile_id === employee?.id);
   const visibleEntries = canConfigure || canManageEntries ? entries : ownEntries;
+  const eventsByEntry = useMemo(() => {
+    const grouped = new Map<string, TimeEvent[]>();
+    events.forEach((event) => {
+      grouped.set(event.time_entry_id, [...(grouped.get(event.time_entry_id) ?? []), event]);
+    });
+    return grouped;
+  }, [events]);
   const active = ownEntries.find((entry) => !entry.clock_out);
   const status = active?.break_started_at ? 'On Break' : active ? 'Clocked In' : 'Clocked Out';
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -157,7 +195,9 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       let selfiePath: string | null = null;
       if (action === 'clock_in' && settings.require_selfie) {
         if (!selfie) throw new Error('Take or choose a selfie before clocking in.');
-        selfiePath = `${workspaceId}/${userId}/selfies/${crypto.randomUUID()}-${selfie.name}`;
+        const selfieError = validateWorkforceUpload(selfie, true);
+        if (selfieError) throw new Error(selfieError);
+        selfiePath = `${workspaceId}/${userId}/selfies/${crypto.randomUUID()}-${sanitizeWorkforceFilename(selfie.name)}`;
         const { error: uploadError } = await supabase.storage.from('employee-documents').upload(selfiePath, selfie);
         if (uploadError) throw uploadError;
       }
@@ -194,13 +234,29 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     const { error } = await supabase.from('time_entries').update({ clock_in: new Date(clockIn).toISOString(), clock_out: clockOut ? new Date(clockOut).toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entry.id);
     if (error) onNotice(error.message); else { onNotice('Attendance entry updated.'); await load(); }
   };
-  const deleteEntry = async (entry: TimeEntry) => {
-    if (!supabase || !canManageEntries || !window.confirm('Delete this attendance entry?')) return;
-    const { error } = await supabase.from('time_entries').delete().eq('id', entry.id);
-    if (error) onNotice(error.message); else { onNotice('Attendance entry deleted.'); await load(); }
+  const deleteEntry = (entry: TimeEntry) => {
+    if (!supabase || !canManageEntries) return;
+    setConfirmDialog({
+      title: 'Delete attendance entry?',
+      body: 'This attendance record will be permanently removed.',
+      confirmLabel: 'Delete entry',
+      onConfirm: async () => {
+        const { error } = await supabase.from('time_entries').delete().eq('id', entry.id);
+        if (error) throw new Error(error.message);
+        onNotice('Attendance entry deleted.');
+        await load();
+      },
+    });
   };
 
-  return (
+  const openSelfie = async (path: string) => {
+    if (!supabase) return;
+    const { data, error } = await supabase.storage.from('employee-documents').createSignedUrl(path, 300);
+    if (error || !data?.signedUrl) { onNotice(error?.message ?? 'Selfie could not be opened.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  return <>
     <ModuleFrame icon={Clock3} title="Timekeeping" subtitle="Attendance and working hours" theme={theme}>
       <div className={cn('grid gap-4', canConfigure && 'lg:grid-cols-[minmax(0,1fr)_380px]')}>
         <div className="space-y-4">
@@ -225,12 +281,26 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
             )}
           </div>}
           {role === 'owner' && <div><h3 className="font-bold">Attendance records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Owners can correct or remove entries. Admins need an explicit attendance permission.</p></div>}
-          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(canManageEntries ? ['Actions'] : [])]} theme={theme}>
-            {visibleEntries.map((entry) => <tr key={entry.id} className={cn('border-b last:border-0', border(theme))}>
-              {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{canManageEntries && <Cell><div className="flex gap-2"><IconAction label="Edit attendance" icon={Pencil} onClick={() => void adjustEntry(entry)} /><IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} /></div></Cell>}
-            </tr>)}
+          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(canViewEvidence || canManageEntries ? ['Actions'] : [])]} theme={theme}>
+            {visibleEntries.map((entry) => {
+              const entryEvents = eventsByEntry.get(entry.id) ?? [];
+              const expanded = expandedEvidenceEntryId === entry.id;
+              const actionColSpan = (role === 'owner' || role === 'admin' ? 1 : 0) + 6 + (canViewEvidence || canManageEntries ? 1 : 0);
+              return (
+                <Fragment key={entry.id}>
+                  <tr className={cn('border-b last:border-0', border(theme))}>
+                    {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{(canViewEvidence || canManageEntries) && <Cell><div className="flex gap-2">{canViewEvidence && <IconAction label="View clock-in evidence" icon={ShieldCheck} onClick={() => setExpandedEvidenceEntryId(expanded ? '' : entry.id)} />}{canManageEntries && <IconAction label="Edit attendance" icon={Pencil} onClick={() => void adjustEntry(entry)} />}{canManageEntries && <IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} />}</div></Cell>}
+                  </tr>
+                  {expanded && <tr className={cn('border-b', border(theme))}><td colSpan={actionColSpan} className="px-4 py-4"><TimeEvidencePanel events={entryEvents} theme={theme} onOpenSelfie={openSelfie} /></td></tr>}
+                </Fragment>
+              );
+            })}
           </DataTable>
         </div>
+        {canSeePremiumPolicyNotice && <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>
+          <h3 className="font-bold">Employee clock-in policy</h3>
+          <p className={cn('mt-2 text-sm leading-6', muted(theme))}>Advanced per-employee clock-in requirements are available on Plus and Pro.</p>
+        </aside>}
         {canConfigure && <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>
           <h3 className="font-bold">Employee clock-in policy</h3>
           <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Requirements are configured separately for each Admin or Member.</p>
@@ -246,10 +316,41 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         </aside>}
       </div>
     </ModuleFrame>
+    {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
+  </>;
+}
+
+function TimeEvidencePanel({ events, theme, onOpenSelfie }: { events: TimeEvent[]; theme: Theme; onOpenSelfie: (path: string) => Promise<void> }) {
+  if (events.length === 0) return <p className={cn('text-sm', muted(theme))}>No captured clock-in evidence for this entry yet.</p>;
+  return (
+    <div className="grid gap-3">
+      {events.map((event) => {
+        const mapUrl = event.map_url || (event.latitude !== null && event.longitude !== null ? `https://www.google.com/maps?q=${event.latitude},${event.longitude}` : '');
+        return (
+          <section key={event.id} className={cn('rounded-lg border p-3', panel(theme))}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-bold capitalize">{event.event_type.replaceAll('_', ' ')}</p>
+              <p className={cn('text-xs', muted(theme))}>{formatDate(event.occurred_at)} · {formatTime(event.occurred_at)}</p>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-3">
+              <EvidenceItem icon={MapPin} label="GPS location" theme={theme}>{mapUrl ? <a href={mapUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[var(--accent-strong)]">Open map <ExternalLink className="h-3 w-3" /></a> : 'Not captured'}</EvidenceItem>
+              <EvidenceItem icon={ShieldCheck} label="IP address" theme={theme}>{event.ip_address || 'Not captured'}</EvidenceItem>
+              <EvidenceItem icon={MonitorSmartphone} label="Device" theme={theme}>{event.device_information || 'Not captured'}</EvidenceItem>
+              <EvidenceItem icon={Camera} label="Selfie" theme={theme}>{event.selfie_path ? <button type="button" onClick={() => void onOpenSelfie(event.selfie_path!)} className="font-semibold text-[var(--accent-strong)]">Open selfie</button> : 'Not captured'}</EvidenceItem>
+              <EvidenceItem icon={MapPin} label="Distance from office" theme={theme}>{event.distance_from_office_meters !== null ? `${Math.round(Number(event.distance_from_office_meters))} m` : 'Not calculated'}</EvidenceItem>
+            </div>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
-function HrPage({ workspaceId, userId, role, profiles, capabilities, theme, onNotice }: WorkforceProps) {
+function EvidenceItem({ icon: Icon, label, theme, children }: { icon: typeof MapPin; label: string; theme: Theme; children: ReactNode }) {
+  return <div className={cn('rounded-md border p-2', buttonSurface(theme))}><p className={cn('mb-1 flex items-center gap-1.5 font-semibold', muted(theme))}><Icon className="h-3.5 w-3.5" />{label}</p><div className="break-words">{children}</div></div>;
+}
+
+function HrPage({ workspaceId, userId, role, profiles, memberships, capabilities, theme, onNotice }: WorkforceProps) {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
@@ -259,6 +360,10 @@ function HrPage({ workspaceId, userId, role, profiles, capabilities, theme, onNo
   const [tab, setTab] = useState<'people' | 'leave' | 'documents' | 'performance' | 'compensation'>('people');
   const [editing, setEditing] = useState<EmployeeProfile | null>(null);
   const [saving, setSaving] = useState(false);
+  const [leaveModal, setLeaveModal] = useState<{ mode: 'create' | 'edit'; request?: LeaveRequest } | null>(null);
+  const [leaveDraft, setLeaveDraft] = useState({ leave_type_id: '', start_date: '', end_date: '', reason: '' });
+  const [allocationModal, setAllocationModal] = useState<{ leaveTypeId: string; leaveTypeName: string } | null>(null);
+  const [allocationValue, setAllocationValue] = useState('');
   const canManage = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_hr));
   const canApproveLeave = role === 'owner' || (role === 'admin' && Boolean(capabilities?.approve_leave));
   const canManagePayroll = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_payroll));
@@ -277,12 +382,25 @@ function HrPage({ workspaceId, userId, role, profiles, capabilities, theme, onNo
     setSelectedId((current) => current || next.find((employee) => employee.user_id === userId)?.id || next[0]?.id || '');
   }, [onNotice, userId, workspaceId]);
   useEffect(() => { void load(); }, [load]);
-  useWorkforceRealtime(workspaceId, 'employee_profiles,leave_requests,leave_balances,employee_documents,performance_records', load);
+  useWorkforceRealtime(workspaceId, 'employee_profiles,leave_requests,leave_balances,employee_documents,performance_records,employee_record_change_requests', load);
 
   const selected = employees.find((employee) => employee.id === selectedId) ?? null;
   const canRequestLeave = (role === 'member' || role === 'admin') && selected?.user_id === userId;
   useEffect(() => { setEditing(selected ? { ...selected } : null); }, [selected]);
-  const filtered = employees.filter((employee) => employeeName(employee, profiles).toLowerCase().includes(query.toLowerCase()) || (employee.department ?? '').toLowerCase().includes(query.toLowerCase()));
+  const membershipRoleByUserId = useMemo(() => new Map(memberships.map((membership) => [membership.user_id, membership.role])), [memberships]);
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return employees
+      .filter((employee) => employeeName(employee, profiles).toLowerCase().includes(normalizedQuery) || (employee.department ?? '').toLowerCase().includes(normalizedQuery))
+      .sort((first, second) => {
+        const firstRole = membershipRoleByUserId.get(first.user_id);
+        const secondRole = membershipRoleByUserId.get(second.user_id);
+        const firstPriority = firstRole === 'owner' ? 0 : 1;
+        const secondPriority = secondRole === 'owner' ? 0 : 1;
+        if (firstPriority !== secondPriority) return firstPriority - secondPriority;
+        return employeeName(first, profiles).localeCompare(employeeName(second, profiles), undefined, { sensitivity: 'base' });
+      });
+  }, [employees, membershipRoleByUserId, profiles, query]);
 
   const saveProfile = async () => {
     if (!supabase || !editing) return;
@@ -301,45 +419,71 @@ function HrPage({ workspaceId, userId, role, profiles, capabilities, theme, onNo
     setSaving(false); if (error) onNotice(error.message); else { onNotice('Employee profile saved.'); await load(); }
   };
 
-  const requestLeave = async () => {
-    if (!supabase || !selected) return;
-    const leaveTypeId = leaveTypes[0]?.id;
-    if (!leaveTypeId) return onNotice('No leave types are configured.');
-    const start = window.prompt('Leave start date (YYYY-MM-DD)'); if (!start) return;
-    const end = window.prompt('Leave end date (YYYY-MM-DD)', start); if (!end) return;
-    const reason = window.prompt('Reason (optional)') ?? '';
-    const days = Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000) + 1);
-    const { error } = await supabase.from('leave_requests').insert({ workspace_id: workspaceId, employee_profile_id: selected.id, leave_type_id: leaveTypeId, start_date: start, end_date: end, days, reason });
-    if (error) onNotice(error.message); else { onNotice('Leave request submitted.'); await load(); }
+  const openLeaveModal = (request?: LeaveRequest) => {
+    const leaveTypeId = request?.leave_type_id || leaveTypes[0]?.id || '';
+    if (!leaveTypeId) { onNotice('No leave types are configured.'); return; }
+    setLeaveDraft({ leave_type_id: leaveTypeId, start_date: request?.start_date ?? today(), end_date: request?.end_date ?? today(), reason: request?.reason ?? '' });
+    setLeaveModal({ mode: request ? 'edit' : 'create', request });
+  };
+
+  const saveLeaveRequest = async () => {
+    if (!supabase || !selected || !leaveModal) return;
+    const days = daysBetweenInclusive(leaveDraft.start_date, leaveDraft.end_date);
+    if (!leaveDraft.leave_type_id || !leaveDraft.start_date || !leaveDraft.end_date || days < 1) { onNotice('Enter valid leave dates.'); return; }
+    const payload = { leave_type_id: leaveDraft.leave_type_id, start_date: leaveDraft.start_date, end_date: leaveDraft.end_date, days, reason: leaveDraft.reason.trim() || null, updated_at: new Date().toISOString() };
+    const result = leaveModal.mode === 'edit' && leaveModal.request
+      ? await supabase.from('leave_requests').update(payload).eq('id', leaveModal.request.id)
+      : await supabase.from('leave_requests').insert({ ...payload, workspace_id: workspaceId, employee_profile_id: selected.id });
+    if (result.error) onNotice(result.error.message); else { setLeaveModal(null); onNotice(leaveModal.mode === 'edit' ? 'Leave request updated.' : 'Leave request submitted.'); await load(); }
   };
 
   const reviewLeave = async (id: string, status: 'approved' | 'rejected') => {
-    if (!supabase) return; const { error } = await supabase.from('leave_requests').update({ status, reviewed_by: userId, reviewed_at: new Date().toISOString() }).eq('id', id);
+    if (!supabase) return; const { error } = await supabase.from('leave_requests').update({ status, reviewed_by: userId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
     if (error) onNotice(error.message); else await load();
   };
-  const setLeaveAllocation = async (leaveTypeId: string) => {
-    if (!supabase || !selected || !canManage) return;
+  const cancelLeave = async (id: string) => {
+    if (!supabase) return; const { error } = await supabase.from('leave_requests').update({ status: 'canceled', updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) onNotice(error.message); else { onNotice('Leave request canceled.'); await load(); }
+  };
+  const deleteLeave = async (id: string) => {
+    if (!supabase || !canApproveLeave) return;
+    const { error } = await supabase.from('leave_requests').delete().eq('id', id);
+    if (error) onNotice(error.message); else { onNotice('Leave request deleted.'); await load(); }
+  };
+  const openAllocationModal = (leaveTypeId: string, leaveTypeName: string) => {
+    if (!selected || !canManage) return;
     const current = leaveBalances.find((balance) => balance.employee_profile_id === selected.id && balance.leave_type_id === leaveTypeId && balance.year === new Date().getFullYear());
-    const allocated = Number(window.prompt('Annual leave allocation', String(current?.allocated ?? 0))); if (!Number.isFinite(allocated) || allocated < 0) return;
-    const { error } = await supabase.from('leave_balances').upsert({ workspace_id: workspaceId, employee_profile_id: selected.id, leave_type_id: leaveTypeId, year: new Date().getFullYear(), allocated, used: current?.used ?? 0 }, { onConflict: 'employee_profile_id,leave_type_id,year' });
-    if (error) onNotice(error.message); else await load();
+    setAllocationValue(String(current?.allocated ?? 0));
+    setAllocationModal({ leaveTypeId, leaveTypeName });
+  };
+  const saveLeaveAllocation = async () => {
+    if (!supabase || !selected || !canManage || !allocationModal) return;
+    const allocated = Number(allocationValue);
+    if (!Number.isFinite(allocated) || allocated < 0) { onNotice('Enter a valid non-negative allocation.'); return; }
+    const current = leaveBalances.find((balance) => balance.employee_profile_id === selected.id && balance.leave_type_id === allocationModal.leaveTypeId && balance.year === new Date().getFullYear());
+    const { error } = await supabase.from('leave_balances').upsert({ workspace_id: workspaceId, employee_profile_id: selected.id, leave_type_id: allocationModal.leaveTypeId, year: new Date().getFullYear(), allocated, used: current?.used ?? 0 }, { onConflict: 'employee_profile_id,leave_type_id,year' });
+    if (error) onNotice(error.message); else { setAllocationModal(null); await load(); }
   };
 
-  return <ModuleFrame icon={BriefcaseBusiness} title="HR" subtitle={canManage ? 'People, leave, documents, and performance' : 'Your employment profile and leave'} theme={theme}>
+  return <><ModuleFrame icon={BriefcaseBusiness} title="HR" subtitle={canManage ? 'People, leave, documents, and performance' : 'Your employment profile and leave'} theme={theme}>
     <Segmented options={[['people', canManage ? 'People' : 'Profile'], ['leave', canApproveLeave ? 'Leave approvals' : 'Leave'], ['documents', 'Documents'], ['performance', 'Performance'], ...(canManagePayroll ? [['compensation', 'Compensation']] : [])]} value={tab} onChange={(value) => setTab(value as typeof tab)} theme={theme} />
-    {tab === 'people' && <div className={cn('mt-5 grid min-h-0 gap-5', canManage ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'max-w-4xl')}>
-      {canManage && <div><label className={cn('flex h-10 items-center gap-2 rounded-lg border px-3', panel(theme))}><Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label><div className="mt-3 space-y-1">{filtered.map((employee) => <button key={employee.id} onClick={() => setSelectedId(employee.id)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left', selectedId === employee.id ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-[#F0EDF3]')}><MiniAvatar profile={profiles[employee.user_id]} /><span className="min-w-0"><strong className="block truncate text-sm">{employeeName(employee, profiles)}</strong><span className={cn('block truncate text-xs', muted(theme))}>{employee.position || employee.department || 'Employee'}</span></span></button>)}</div></div>}
-      {editing && <div className={cn('rounded-lg border p-5', panel(theme))}><div className="mb-5 flex items-center gap-3"><MiniAvatar profile={profiles[editing.user_id]} large /><div><h3 className="text-lg font-bold">{employeeName(editing, profiles)}</h3><p className={cn('text-sm', muted(theme))}>{profiles[editing.user_id]?.email}</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="First name" value={editing.first_name ?? ''} onChange={(value) => setEditing({ ...editing, first_name: value })} theme={theme} /><Field label="Last name" value={editing.last_name ?? ''} onChange={(value) => setEditing({ ...editing, last_name: value })} theme={theme} /><Field label="Contact number" value={editing.contact_number ?? ''} onChange={(value) => setEditing({ ...editing, contact_number: value })} theme={theme} /><Field label="Birthday" type="date" value={editing.birthday ?? ''} onChange={(value) => setEditing({ ...editing, birthday: value || null })} theme={theme} /><Field label="Address" value={editing.address ?? ''} onChange={(value) => setEditing({ ...editing, address: value })} theme={theme} wide /><Field label="Emergency contact" value={editing.emergency_contact_name ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_name: value })} theme={theme} /><Field label="Emergency number" value={editing.emergency_contact_number ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_number: value })} theme={theme} />{canManage && <><Field label="Employee number" value={editing.employee_number ?? ''} onChange={(value) => setEditing({ ...editing, employee_number: value || null })} theme={theme} /><Field label="Department" value={editing.department ?? ''} onChange={(value) => setEditing({ ...editing, department: value || null })} theme={theme} /><Field label="Position" value={editing.position ?? ''} onChange={(value) => setEditing({ ...editing, position: value || null })} theme={theme} /><Field label="Hire date" type="date" value={editing.hire_date ?? ''} onChange={(value) => setEditing({ ...editing, hire_date: value || null })} theme={theme} /><SelectField label="Employment type" value={editing.employment_type ?? ''} options={['', 'full_time', 'part_time', 'contractor', 'temporary', 'intern']} onChange={(value) => setEditing({ ...editing, employment_type: value || null })} theme={theme} /><SelectField label="Status" value={editing.employment_status} options={['active', 'inactive', 'on_leave', 'terminated']} onChange={(value) => setEditing({ ...editing, employment_status: value })} theme={theme} /><label className="block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Manager</span><select value={editing.manager_user_id ?? ''} onChange={(event) => setEditing({ ...editing, manager_user_id: event.target.value || null })} className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="">Not assigned</option>{employees.filter((employee) => employee.id !== editing.id).map((employee) => <option key={employee.id} value={employee.user_id}>{employeeName(employee, profiles)}</option>)}</select></label></>}</div><button onClick={() => void saveProfile()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save profile</button></div>}
+    {tab === 'people' && <div className={cn('mt-5 grid min-h-0 max-h-[calc(100dvh-230px)] gap-5 overflow-hidden', canManage ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'w-full')}>
+      {canManage && <div className="min-h-0 overflow-hidden"><label className={cn('flex h-10 items-center gap-2 rounded-lg border px-3', panel(theme))}><Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label><div className="mt-3 max-h-[calc(100dvh-290px)] space-y-1 overflow-y-auto pr-1 scroll-area">{filtered.map((employee) => <button key={employee.id} onClick={() => setSelectedId(employee.id)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left', selectedId === employee.id ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-[#F0EDF3]')}><MiniAvatar profile={profiles[employee.user_id]} /><span className="min-w-0"><strong className="block truncate text-sm">{employeeName(employee, profiles)}</strong><span className={cn('block truncate text-xs', muted(theme))}>{hrPersonLabel(membershipRoleByUserId.get(employee.user_id))}</span></span></button>)}</div></div>}
+      {editing && <div className={cn('min-h-0 max-h-[calc(100dvh-230px)] overflow-y-auto rounded-lg border p-5 scroll-area', panel(theme))}><div className="mb-5 flex items-center gap-3"><MiniAvatar profile={profiles[editing.user_id]} large /><div><h3 className="text-lg font-bold">{employeeName(editing, profiles)}</h3><p className={cn('text-sm', muted(theme))}>{profiles[editing.user_id]?.email}</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="First name" value={editing.first_name ?? ''} onChange={(value) => setEditing({ ...editing, first_name: value })} theme={theme} /><Field label="Last name" value={editing.last_name ?? ''} onChange={(value) => setEditing({ ...editing, last_name: value })} theme={theme} /><Field label="Contact number" value={editing.contact_number ?? ''} onChange={(value) => setEditing({ ...editing, contact_number: value })} theme={theme} /><Field label="Birthday" type="date" value={editing.birthday ?? ''} onChange={(value) => setEditing({ ...editing, birthday: value || null })} theme={theme} /><Field label="Address" value={editing.address ?? ''} onChange={(value) => setEditing({ ...editing, address: value })} theme={theme} wide /><Field label="Emergency contact" value={editing.emergency_contact_name ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_name: value })} theme={theme} /><Field label="Emergency number" value={editing.emergency_contact_number ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_number: value })} theme={theme} />{canManage && <><Field label="Employee number" value={editing.employee_number ?? ''} onChange={(value) => setEditing({ ...editing, employee_number: value || null })} theme={theme} /><Field label="Department" value={editing.department ?? ''} onChange={(value) => setEditing({ ...editing, department: value || null })} theme={theme} /><Field label="Position" value={editing.position ?? ''} onChange={(value) => setEditing({ ...editing, position: value || null })} theme={theme} /><Field label="Hire date" type="date" value={editing.hire_date ?? ''} onChange={(value) => setEditing({ ...editing, hire_date: value || null })} theme={theme} /><SelectField label="Employment type" value={editing.employment_type ?? ''} options={['', 'full_time', 'part_time', 'contractor', 'temporary', 'intern']} onChange={(value) => setEditing({ ...editing, employment_type: value || null })} theme={theme} /><SelectField label="Status" value={editing.employment_status} options={['active', 'inactive', 'on_leave', 'terminated']} onChange={(value) => setEditing({ ...editing, employment_status: value })} theme={theme} /><label className="block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Manager</span><select value={editing.manager_user_id ?? ''} onChange={(event) => setEditing({ ...editing, manager_user_id: event.target.value || null })} className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="">Not assigned</option>{employees.filter((employee) => employee.id !== editing.id).map((employee) => <option key={employee.id} value={employee.user_id}>{employeeName(employee, profiles)}</option>)}</select></label></>}</div><button onClick={() => void saveProfile()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save profile</button></div>}
     </div>}
-    {tab === 'leave' && <div className="mt-5"><div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{leaveTypes.map((type) => { const balance = leaveBalances.find((item) => item.employee_profile_id === selected?.id && item.leave_type_id === type.id && item.year === new Date().getFullYear()); const remaining = Number(balance?.allocated ?? type.annual_allowance) - Number(balance?.used ?? 0); return <button key={type.id} type="button" onClick={() => void setLeaveAllocation(type.id)} disabled={!canManage} className={cn('rounded-lg border p-4 text-left', panel(theme))}><span className={cn('text-xs font-semibold', muted(theme))}>{type.name}</span><strong className="mt-1 block text-xl">{remaining} days</strong></button>; })}</div><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">{canApproveLeave ? 'Leave approvals' : 'Leave requests'}</h3><p className={cn('text-sm', muted(theme))}>{leaveRequests.length} requests</p></div>{canRequestLeave && <button onClick={() => void requestLeave()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Request leave</button>}</div><DataTable headers={['Employee', 'Type', 'Dates', 'Days', 'Status', 'Actions']} theme={theme}>{leaveRequests.map((request) => <tr key={request.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employees.find((employee) => employee.id === request.employee_profile_id), profiles)}</Cell><Cell>{leaveTypes.find((type) => type.id === request.leave_type_id)?.name ?? 'Leave'}</Cell><Cell>{formatDate(request.start_date)} – {formatDate(request.end_date)}</Cell><Cell>{request.days}</Cell><Cell><StatusPill value={request.status} /></Cell><Cell>{canApproveLeave && request.status === 'pending' ? <div className="flex gap-2"><IconAction label="Approve" icon={Check} onClick={() => void reviewLeave(request.id, 'approved')} /><IconAction label="Reject" icon={Square} onClick={() => void reviewLeave(request.id, 'rejected')} /></div> : '—'}</Cell></tr>)}</DataTable></div>}
-    {tab === 'documents' && <DocumentPanel workspaceId={workspaceId} userId={userId} employee={selected} canManage={canManage} theme={theme} onNotice={onNotice} />}
-    {tab === 'performance' && <PerformancePanel workspaceId={workspaceId} userId={userId} employee={selected} canManage={canManage} theme={theme} onNotice={onNotice} />}
-    {tab === 'compensation' && canManagePayroll && <CompensationPanel workspaceId={workspaceId} userId={userId} employee={selected} canManage={canManagePayroll} theme={theme} onNotice={onNotice} />}
-  </ModuleFrame>;
+    {tab === 'leave' && <div className="mt-5"><div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{leaveTypes.map((type) => { const balance = leaveBalances.find((item) => item.employee_profile_id === selected?.id && item.leave_type_id === type.id && item.year === new Date().getFullYear()); const remaining = Number(balance?.allocated ?? type.annual_allowance) - Number(balance?.used ?? 0); return <button key={type.id} type="button" onClick={() => openAllocationModal(type.id, type.name)} disabled={!canManage} className={cn('rounded-lg border p-4 text-left', panel(theme))}><span className={cn('text-xs font-semibold', muted(theme))}>{type.name}</span><strong className="mt-1 block text-xl">{remaining} days</strong></button>; })}</div><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">{canApproveLeave ? 'Leave approvals' : 'Leave requests'}</h3><p className={cn('text-sm', muted(theme))}>{leaveRequests.length} requests</p></div>{canRequestLeave && <button onClick={() => openLeaveModal()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Request leave</button>}</div><DataTable headers={['Employee', 'Type', 'Dates', 'Days', 'Status', 'Actions']} theme={theme}>{leaveRequests.map((request) => { const requestEmployee = employees.find((employee) => employee.id === request.employee_profile_id); const isOwnRequest = requestEmployee?.user_id === userId; const canEditRequest = canApproveLeave || (isOwnRequest && request.status === 'pending'); const canCancelRequest = isOwnRequest && request.status === 'pending'; const canDeleteRequest = canApproveLeave; return <tr key={request.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(requestEmployee, profiles)}</Cell><Cell>{leaveTypes.find((type) => type.id === request.leave_type_id)?.name ?? 'Leave'}</Cell><Cell>{formatDate(request.start_date)} - {formatDate(request.end_date)}</Cell><Cell>{request.days}</Cell><Cell><StatusPill value={request.status} /></Cell><Cell><div className="flex flex-wrap gap-2">{canEditRequest && <IconAction label="Edit leave request" icon={Pencil} onClick={() => openLeaveModal(request)} />}{canApproveLeave && request.status === 'pending' && <><IconAction label="Approve" icon={Check} onClick={() => void reviewLeave(request.id, 'approved')} /><IconAction label="Deny" icon={X} onClick={() => void reviewLeave(request.id, 'rejected')} /></>}{canCancelRequest && <IconAction label="Cancel request" icon={X} onClick={() => void cancelLeave(request.id)} />}{canDeleteRequest && <IconAction label="Delete leave request" icon={Trash2} onClick={() => void deleteLeave(request.id)} />}{!canEditRequest && !canApproveLeave && !canCancelRequest && !canDeleteRequest && <span className={muted(theme)}>—</span>}</div></Cell></tr>; })}</DataTable></div>}
+    {tab === 'documents' && <DocumentPanel workspaceId={workspaceId} userId={userId} employee={selected} profiles={profiles} canManage={canManage} theme={theme} onNotice={onNotice} />}
+    {tab === 'performance' && <PerformancePanel workspaceId={workspaceId} userId={userId} employee={selected} profiles={profiles} canManage={canManage} theme={theme} onNotice={onNotice} />}
+    {tab === 'compensation' && canManagePayroll && <CompensationPanel workspaceId={workspaceId} userId={userId} employee={selected} profiles={profiles} canManage={canManagePayroll} theme={theme} onNotice={onNotice} />}
+  </ModuleFrame>
+    {leaveModal && <WorkforceModal title={leaveModal.mode === 'edit' ? 'Edit leave request' : 'Request leave'} theme={theme} onClose={() => setLeaveModal(null)} footer={<><button onClick={() => setLeaveModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void saveLeaveRequest()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save request</button></>}><div className="grid gap-4 sm:grid-cols-2"><div className="sm:col-span-2"><SelectField label="Leave type" value={leaveDraft.leave_type_id} options={leaveTypes.map((type) => type.id)} optionLabels={Object.fromEntries(leaveTypes.map((type) => [type.id, type.name]))} onChange={(value) => setLeaveDraft({ ...leaveDraft, leave_type_id: value })} theme={theme} /></div><Field label="Start date" type="date" value={leaveDraft.start_date} onChange={(value) => setLeaveDraft({ ...leaveDraft, start_date: value, end_date: leaveDraft.end_date || value })} theme={theme} /><Field label="End date" type="date" value={leaveDraft.end_date} onChange={(value) => setLeaveDraft({ ...leaveDraft, end_date: value })} theme={theme} /><Field label="Reason" value={leaveDraft.reason} onChange={(value) => setLeaveDraft({ ...leaveDraft, reason: value })} theme={theme} wide /></div></WorkforceModal>}
+    {allocationModal && <WorkforceModal title={`Set ${allocationModal.leaveTypeName} allocation`} theme={theme} onClose={() => setAllocationModal(null)} footer={<><button onClick={() => setAllocationModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void saveLeaveAllocation()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save allocation</button></>}><Field label="Annual days" type="number" value={allocationValue} onChange={setAllocationValue} theme={theme} /></WorkforceModal>}
+  </>;
 }
 
 function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme, onNotice }: WorkforceProps) {
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]); const [items, setItems] = useState<PayrollItem[]>([]); const [employees, setEmployees] = useState<EmployeeProfile[]>([]); const [settings, setSettings] = useState<WorkforceSettings | null>(null); const [rules, setRules] = useState<PayrollRule[]>([]); const [selectedPeriod, setSelectedPeriod] = useState(''); const [busy, setBusy] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const canManage = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_payroll));
   const canApprove = role === 'owner' || (role === 'admin' && Boolean(capabilities?.approve_payroll));
   const load = useCallback(async () => { if (!supabase) return; const [p, i, e, s, r] = await Promise.all([supabase.from('payroll_periods').select('*').eq('workspace_id', workspaceId).order('period_start', { ascending: false }), supabase.from('payroll_items').select('*').eq('workspace_id', workspaceId), supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId), supabase.from('workforce_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(), supabase.from('payroll_rules').select('*').eq('workspace_id', workspaceId).order('name')]); const error = p.error ?? i.error ?? e.error ?? s.error ?? r.error; if (error) return onNotice(error.message); setPeriods((p.data ?? []) as PayrollPeriod[]); setItems((i.data ?? []) as PayrollItem[]); setEmployees((e.data ?? []) as EmployeeProfile[]); setSettings(s.data as WorkforceSettings | null); setRules((r.data ?? []) as PayrollRule[]); setSelectedPeriod((current) => current || p.data?.[0]?.id || ''); }, [onNotice, workspaceId]);
@@ -351,14 +495,29 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
   const setStatus = async (status: 'approved' | 'paid') => { if (!supabase || !period) return; const { error } = await supabase.rpc('set_payroll_period_status', { target_payroll_period_id: period.id, requested_status: status }); if (error) onNotice(error.message); else await load(); };
   const saveHubSettings = async () => { if (!supabase || !settings || role !== 'owner') return; const { error } = await supabase.from('workforce_settings').update({ country_code: settings.country_code, currency_code: settings.currency_code, locale: settings.locale, timezone: settings.timezone, payroll_frequency: settings.payroll_frequency, updated_at: new Date().toISOString() }).eq('workspace_id', workspaceId); if (error) onNotice(error.message); else onNotice('Payroll settings saved.'); };
   const addRule = async () => { if (!supabase || !settings) return; const name = window.prompt('Payroll rule name'); if (!name) return; const kind = window.prompt('Type: earning or deduction', 'deduction'); if (kind !== 'earning' && kind !== 'deduction') return onNotice('Rule type must be earning or deduction.'); const calculation = window.prompt('Calculation: fixed or percentage', 'percentage'); if (calculation !== 'fixed' && calculation !== 'percentage') return onNotice('Calculation must be fixed or percentage.'); const value = Number(window.prompt(calculation === 'percentage' ? 'Percentage value' : `Fixed amount (${settings.currency_code})`, '0')); if (!Number.isFinite(value) || value < 0) return onNotice('Enter a valid non-negative value.'); const { error } = await supabase.from('payroll_rules').insert({ workspace_id: workspaceId, name, rule_kind: kind, calculation_type: calculation, value, country_code: settings.country_code }); if (error) onNotice(error.message); else await load(); };
-  const deleteRule = async (ruleId: string) => { if (!supabase || !window.confirm('Delete this payroll rule?')) return; const { error } = await supabase.from('payroll_rules').delete().eq('id', ruleId); if (error) onNotice(error.message); else await load(); };
-  return <ModuleFrame icon={Banknote} title="Payroll Preview" subtitle={canManage ? 'Estimated pay periods and compensation' : 'Your estimated pay statements'} theme={theme}>
+  const deleteRule = (ruleId: string) => {
+    if (!supabase) return;
+    setConfirmDialog({
+      title: 'Delete payroll rule?',
+      body: 'This payroll rule will be removed from future payroll calculations.',
+      confirmLabel: 'Delete rule',
+      onConfirm: async () => {
+        const { error } = await supabase.from('payroll_rules').delete().eq('id', ruleId);
+        if (error) throw new Error(error.message);
+        await load();
+      },
+    });
+  };
+  return <>
+  <ModuleFrame icon={Banknote} title="Payroll Preview" subtitle={canManage ? 'Estimated pay periods and compensation' : 'Your estimated pay statements'} theme={theme}>
     {role === 'owner' && settings && <details className={cn('mb-5 rounded-lg border p-4', panel(theme))}><summary className="cursor-pointer font-bold">Hub payroll settings</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Field label="Country" value={settings.country_code} onChange={(value) => setSettings({ ...settings, country_code: value.toUpperCase() })} theme={theme} /><Field label="Currency" value={settings.currency_code} onChange={(value) => setSettings({ ...settings, currency_code: value.toUpperCase() })} theme={theme} /><Field label="Locale" value={settings.locale} onChange={(value) => setSettings({ ...settings, locale: value })} theme={theme} /><Field label="Time zone" value={settings.timezone} onChange={(value) => setSettings({ ...settings, timezone: value })} theme={theme} /><SelectField label="Frequency" value={settings.payroll_frequency} options={['weekly', 'biweekly', 'semimonthly', 'monthly']} onChange={(value) => setSettings({ ...settings, payroll_frequency: value })} theme={theme} /></div><button onClick={() => void saveHubSettings()} className="mt-4 h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Hub settings</button></details>}
     {canManage && <details className={cn('mb-5 rounded-lg border p-4', panel(theme))}><summary className="cursor-pointer font-bold">Payroll rules ({rules.length})</summary><div className="mt-3 space-y-2">{rules.map((rule) => <div key={rule.id} className="flex items-center justify-between gap-3 rounded-lg border border-current/10 px-3 py-2"><span><strong className="block text-sm">{rule.name}</strong><span className={cn('text-xs capitalize', muted(theme))}>{rule.rule_kind} · {rule.calculation_type} · {rule.value}{rule.calculation_type === 'percentage' ? '%' : ` ${settings?.currency_code ?? ''}`}</span></span><button aria-label="Delete payroll rule" title="Delete payroll rule" onClick={() => void deleteRule(rule.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#FCA5A5] text-[#B91C1C]"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div><button onClick={() => void addRule()} className={cn('mt-3 inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />Add rule</button></details>}
     <div className="flex flex-wrap items-center justify-between gap-3"><select value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)} className={cn('h-11 min-w-64 rounded-lg border px-3 text-sm', panel(theme))}><option value="">Select pay period</option>{periods.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}</select>{canManage && <div className="flex gap-2"><button onClick={() => void createPeriod()} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />New period</button>{period && <button onClick={() => void generate()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><RefreshCw className="h-4 w-4" />Calculate</button>}</div>}</div>
     {period && <><div className="mt-5 grid gap-4 sm:grid-cols-3"><Metric label="Gross payroll" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.gross_pay), 0))} theme={theme} /><Metric label="Net payroll" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Status" value={period.status} accent theme={theme} /></div>{canApprove && period.status === 'calculated' && <button onClick={() => void setStatus('approved')} className="mt-4 h-10 rounded-lg bg-[#16A34A] px-4 text-sm font-bold text-white">Approve payroll</button>}{canManage && period.status === 'approved' && <button onClick={() => void setStatus('paid')} className="mt-4 h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Mark paid</button>}<div className="mt-5"><DataTable headers={['Employee', 'Regular hours', 'Overtime', 'Gross', 'Deductions', 'Net']} theme={theme}>{periodItems.map((item) => <tr key={item.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employees.find((employee) => employee.id === item.employee_profile_id), profiles)}</Cell><Cell>{Number(item.regular_hours).toFixed(2)}</Cell><Cell>{Number(item.overtime_hours).toFixed(2)}</Cell><Cell>{formatter.format(item.gross_pay)}</Cell><Cell>{formatter.format(item.deductions)}</Cell><Cell strong>{formatter.format(item.net_pay)}</Cell></tr>)}</DataTable></div></>}
     {!period && <EmptyState icon={Banknote} title="No payroll period selected" body={canManage ? 'Create the first pay period to calculate payroll from attendance.' : 'Your pay statements will appear here.'} theme={theme} />}
-  </ModuleFrame>;
+  </ModuleFrame>
+  {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
+  </>;
 }
 
 function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotice }: WorkforceProps) {
@@ -372,20 +531,71 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   return <ModuleFrame icon={Gauge} title="Reports" subtitle="Workforce health and payroll overview" theme={theme}><div className="mb-5 flex flex-wrap gap-3"><Field label="From" type="date" value={from} onChange={setFrom} theme={theme} compact /><Field label="To" type="date" value={to} onChange={setTo} theme={theme} compact /><SelectField label="Department" value={department} options={['all', ...departments]} onChange={setDepartment} theme={theme} compact /><select aria-label="Employee filter" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} className={cn('mt-6 h-10 rounded-lg border px-3 text-sm', panel(theme))}><option value="all">All employees</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employeeName(employee, profiles)}</option>)}</select></div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Employees present" value={String(presentIds.size)} theme={theme} accent /><Metric label="Employees late" value={String(late)} theme={theme} /><Metric label="Employees absent" value={String(absent)} theme={theme} /><Metric label="Employees on leave" value={String(leaveTodayIds.size)} theme={theme} /><Metric label="Total hours" value={formatDuration(totalHours)} theme={theme} /><Metric label="Overtime" value={formatDuration(overtime)} theme={theme} /><Metric label="Payroll total" value={formatter.format(filteredPayroll.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Pending leave" value={String(filteredLeave.filter((request) => request.status === 'pending').length)} theme={theme} /></div><div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"><div><h3 className="mb-3 font-bold">Attendance summary</h3><DataTable headers={['Employee', 'Department', 'Days recorded', 'Hours', 'Overtime']} theme={theme}>{filteredEmployees.map((employee) => { const own = filteredEntries.filter((entry) => entry.employee_profile_id === employee.id); const hours = own.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); return <tr key={employee.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employee, profiles)}</Cell><Cell>{employee.department || '—'}</Cell><Cell>{new Set(own.map((entry) => entry.work_date)).size}</Cell><Cell>{formatDuration(hours)}</Cell><Cell>{formatDuration(own.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0))}</Cell></tr>; })}</DataTable></div><aside className={cn('h-fit rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><h3 className="font-bold">Holidays</h3>{canManageHolidays && <button aria-label="Add holiday" title="Add holiday" onClick={() => void addHoliday()} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', buttonSurface(theme))}><Plus className="h-4 w-4" /></button>}</div><div className="mt-3 space-y-2">{holidays.map((holiday) => <div key={holiday.id} className="flex items-center justify-between gap-2 text-sm"><span><strong className="block">{holiday.name}</strong><span className={muted(theme)}>{formatDate(holiday.holiday_date)}</span></span>{canManageHolidays && <button aria-label="Delete holiday" title="Delete holiday" onClick={() => void deleteHoliday(holiday.id)} className="text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button>}</div>)}{holidays.length === 0 && <p className={cn('text-sm', muted(theme))}>No holidays in this range.</p>}</div></aside></div></ModuleFrame>;
 }
 
-function DocumentPanel({ workspaceId, userId, employee, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
+function EmployeeContextHeader({ employee, profiles, theme, label }: { employee: EmployeeProfile | null; profiles: Record<string, AppProfile>; theme: Theme; label: string }) {
+  if (!employee) return null;
+  return <div className={cn('mb-4 flex items-center justify-between gap-3 rounded-lg border px-4 py-3', panel(theme))}><div className="flex min-w-0 items-center gap-3"><MiniAvatar profile={profiles[employee.user_id]} /><div className="min-w-0"><p className="truncate text-sm font-bold">{employeeName(employee, profiles)}</p><p className={cn('truncate text-xs', muted(theme))}>{label}</p></div></div><StatusPill value={employee.employment_status} /></div>;
+}
+
+function DocumentPanel({ workspaceId, userId, employee, profiles, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; profiles: Record<string, AppProfile>; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
   const [documents, setDocuments] = useState<{ id: string; document_type: string; filename: string; object_path: string; created_at: string }[]>([]);
-  const load = useCallback(async () => { if (!supabase || !employee) return; const { data, error } = await supabase.from('employee_documents').select('*').eq('employee_profile_id', employee.id).order('created_at', { ascending: false }); if (error) onNotice(error.message); else setDocuments(data ?? []); }, [employee, onNotice]); useEffect(() => { void load(); }, [load]);
-  const upload = async (file: File) => { if (!supabase || !employee) return; const allowed = ['resume', 'offer_letter', 'employment_contract', 'nda', 'tax_form', 'identity', 'certificate', 'other']; const requestedType = window.prompt('Document type: resume, offer_letter, employment_contract, nda, tax_form, identity, certificate, or other', 'other') ?? 'other'; const documentType = allowed.includes(requestedType) ? requestedType : 'other'; const path = `${workspaceId}/${employee.user_id}/documents/${crypto.randomUUID()}-${file.name}`; const { error: uploadError } = await supabase.storage.from('employee-documents').upload(path, file); if (uploadError) return onNotice(uploadError.message); const { error } = await supabase.from('employee_documents').insert({ workspace_id: workspaceId, employee_profile_id: employee.id, document_type: documentType, filename: file.name, object_path: path, uploaded_by: userId }); if (error) onNotice(error.message); else await load(); };
+  const [requests, setRequests] = useState<RecordChangeRequest[]>([]);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [editingDocument, setEditingDocument] = useState<{ id: string; document_type: string; filename: string; object_path: string; created_at: string } | null>(null);
+  const [changeRequest, setChangeRequest] = useState<{ targetId: string; targetName: string } | null>(null);
+  const [requestDraft, setRequestDraft] = useState({ request_type: 'update' as 'delete' | 'replace' | 'update', details: '' });
+  const [documentDraft, setDocumentDraft] = useState({ document_type: 'other', filename: '' });
+  const documentTypes = ['resume', 'offer_letter', 'employment_contract', 'nda', 'tax_form', 'identity', 'certificate', 'other'];
+  const load = useCallback(async () => {
+    if (!supabase || !employee) return;
+    const [documentsResult, requestsResult] = await Promise.all([
+      supabase.from('employee_documents').select('*').eq('employee_profile_id', employee.id).order('created_at', { ascending: false }),
+      supabase.from('employee_record_change_requests').select('*').eq('employee_profile_id', employee.id).eq('target_table', 'employee_documents').order('created_at', { ascending: false }),
+    ]);
+    if (documentsResult.error || requestsResult.error) onNotice(documentsResult.error?.message ?? requestsResult.error?.message ?? 'Documents could not be loaded.');
+    else { setDocuments(documentsResult.data ?? []); setRequests((requestsResult.data ?? []) as RecordChangeRequest[]); }
+  }, [employee, onNotice]);
+  useEffect(() => { void load(); }, [load]);
+  useWorkforceRealtime(workspaceId, 'employee_documents,employee_record_change_requests', load);
+  const queueUpload = (file: File) => { const validationError = validateWorkforceUpload(file); if (validationError) { onNotice(validationError); return; } setPendingFile(file); setDocumentDraft({ document_type: 'other', filename: file.name }); };
+  const saveUpload = async () => { if (!supabase || !employee || !pendingFile) return; const path = `${workspaceId}/${employee.user_id}/documents/${crypto.randomUUID()}-${sanitizeWorkforceFilename(pendingFile.name)}`; const { error: uploadError } = await supabase.storage.from('employee-documents').upload(path, pendingFile, { contentType: pendingFile.type || 'application/octet-stream', upsert: false }); if (uploadError) return onNotice(uploadError.message); const { error } = await supabase.from('employee_documents').insert({ workspace_id: workspaceId, employee_profile_id: employee.id, document_type: documentDraft.document_type, filename: documentDraft.filename.trim() || pendingFile.name, object_path: path, uploaded_by: userId }); if (error) onNotice(error.message); else { setPendingFile(null); await load(); } };
+  const openEdit = (document: { id: string; document_type: string; filename: string; object_path: string; created_at: string }) => { setEditingDocument(document); setDocumentDraft({ document_type: document.document_type, filename: document.filename }); };
+  const saveEdit = async () => { if (!supabase || !editingDocument) return; const { error } = await supabase.from('employee_documents').update({ document_type: documentDraft.document_type, filename: documentDraft.filename.trim() || editingDocument.filename }).eq('id', editingDocument.id); if (error) onNotice(error.message); else { setEditingDocument(null); await load(); } };
+  const deleteDocument = async (document: { id: string; object_path: string }) => { if (!supabase || !canManage) return; const { error } = await supabase.from('employee_documents').delete().eq('id', document.id); if (error) return onNotice(error.message); await supabase.storage.from('employee-documents').remove([document.object_path]); await load(); };
+  const submitChangeRequest = async () => { if (!supabase || !employee || !changeRequest) return; const { error } = await supabase.from('employee_record_change_requests').insert({ workspace_id: workspaceId, employee_profile_id: employee.id, target_table: 'employee_documents', target_id: changeRequest.targetId, request_type: requestDraft.request_type, details: requestDraft.details.trim() || null, requested_by: userId }); if (error) onNotice(error.message); else { setChangeRequest(null); setRequestDraft({ request_type: 'update', details: '' }); onNotice('Request sent for approval.'); await load(); } };
+  const reviewChangeRequest = async (id: string, status: 'approved' | 'rejected') => { if (!supabase || !canManage) return; const { error } = await supabase.from('employee_record_change_requests').update({ status, reviewed_by: userId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id); if (error) onNotice(error.message); else await load(); };
   if (!employee) return <EmptyState icon={FileUp} title="Select an employee" body="Choose an employee to view documents." theme={theme} />;
-  return <div className="mt-5"><label className={cn('inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><FileUp className="h-4 w-4" />Upload document<input type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{documents.map((document) => <div key={document.id} className={cn('rounded-lg border p-4', panel(theme))}><strong className="block truncate text-sm">{document.filename}</strong><span className={cn('text-xs capitalize', muted(theme))}>{document.document_type.replaceAll('_', ' ')} · {formatDate(document.created_at)}</span></div>)}</div>{documents.length === 0 && <EmptyState icon={FileUp} title="No documents" body={canManage ? 'Upload employment records and certificates.' : 'Your employment documents will appear here.'} theme={theme} />}</div>;
+  const documentNames = Object.fromEntries(documents.map((document) => [document.id, document.filename]));
+  return <div className="mt-5"><EmployeeContextHeader employee={employee} profiles={profiles} theme={theme} label="Documents" /><label className={cn('inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><FileUp className="h-4 w-4" />Upload document<input type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) queueUpload(file); }} /></label>{canManage && <ChangeRequestInbox requests={requests} targetNames={documentNames} theme={theme} onReview={reviewChangeRequest} />}<div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{documents.map((document) => <div key={document.id} className={cn('rounded-lg border p-4', panel(theme))}><div className="flex items-start justify-between gap-3"><span className="min-w-0"><strong className="block truncate text-sm">{document.filename}</strong><span className={cn('text-xs capitalize', muted(theme))}>{document.document_type.replaceAll('_', ' ')} · {formatDate(document.created_at)}</span></span>{canManage ? <span className="flex shrink-0 gap-2"><IconAction label="Edit document" icon={Pencil} onClick={() => openEdit(document)} /><IconAction label="Delete document" icon={Trash2} onClick={() => void deleteDocument(document)} /></span> : <button onClick={() => setChangeRequest({ targetId: document.id, targetName: document.filename })} className={cn('inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-semibold', buttonSurface(theme))}><RefreshCw className="h-3.5 w-3.5" />Action</button>}</div></div>)}</div>{documents.length === 0 && <EmptyState icon={FileUp} title="No documents" body={canManage ? 'Upload employment records and certificates.' : 'Your employment documents will appear here.'} theme={theme} />}{changeRequest && <WorkforceModal title="Request document change" theme={theme} onClose={() => setChangeRequest(null)} footer={<><button onClick={() => setChangeRequest(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void submitChangeRequest()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Send request</button></>}><p className={cn('mb-4 text-sm', muted(theme))}>{changeRequest.targetName}</p><div className="grid gap-4 sm:grid-cols-2"><SelectField label="Action needed" value={requestDraft.request_type} options={['update', 'replace', 'delete']} onChange={(value) => setRequestDraft({ ...requestDraft, request_type: value as 'delete' | 'replace' | 'update' })} theme={theme} /><Field label="Details" value={requestDraft.details} onChange={(value) => setRequestDraft({ ...requestDraft, details: value })} theme={theme} wide /></div></WorkforceModal>}{(pendingFile || editingDocument) && <WorkforceModal title={pendingFile ? 'Upload document' : 'Edit document'} theme={theme} onClose={() => { setPendingFile(null); setEditingDocument(null); }} footer={<><button onClick={() => { setPendingFile(null); setEditingDocument(null); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void (pendingFile ? saveUpload() : saveEdit())} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save document</button></>}><div className="grid gap-4 sm:grid-cols-2"><SelectField label="Document type" value={documentDraft.document_type} options={documentTypes} onChange={(value) => setDocumentDraft({ ...documentDraft, document_type: value })} theme={theme} /><Field label="File name" value={documentDraft.filename} onChange={(value) => setDocumentDraft({ ...documentDraft, filename: value })} theme={theme} /></div></WorkforceModal>}</div>;
 }
 
-function PerformancePanel({ workspaceId, userId, employee, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
-  const [records, setRecords] = useState<{ id: string; record_type: string; title: string; details: string | null; review_date: string; rating: number | null }[]>([]); const load = useCallback(async () => { if (!supabase || !employee) return; const { data, error } = await supabase.from('performance_records').select('*').eq('employee_profile_id', employee.id).order('review_date', { ascending: false }); if (error) onNotice(error.message); else setRecords(data ?? []); }, [employee, onNotice]); useEffect(() => { void load(); }, [load]); const add = async () => { if (!supabase || !employee) return; const title = window.prompt('Record title'); if (!title) return; const type = window.prompt('Type: review, achievement, warning, or goal', 'goal') ?? 'goal'; const details = window.prompt('Details') ?? ''; const { error } = await supabase.from('performance_records').insert({ workspace_id: workspaceId, employee_profile_id: employee.id, record_type: type, title, details, created_by: userId }); if (error) onNotice(error.message); else await load(); };
-  return <div className="mt-5">{canManage && <button onClick={() => void add()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Add record</button>}<div className="mt-4 space-y-3">{records.map((record) => <div key={record.id} className={cn('rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><strong>{record.title}</strong><StatusPill value={record.record_type} /></div><p className={cn('mt-2 text-sm', muted(theme))}>{record.details || 'No details'}</p><span className={cn('mt-2 block text-xs', muted(theme))}>{formatDate(record.review_date)}{record.rating != null ? ` · ${record.rating}/5` : ''}</span></div>)}</div>{records.length === 0 && <EmptyState icon={Gauge} title="No performance records" body="Reviews, achievements, warnings, and goals will appear here." theme={theme} />}</div>;
+function PerformancePanel({ workspaceId, userId, employee, profiles, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; profiles: Record<string, AppProfile>; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
+  const [records, setRecords] = useState<{ id: string; record_type: string; title: string; details: string | null; review_date: string; rating: number | null }[]>([]);
+  const [requests, setRequests] = useState<RecordChangeRequest[]>([]);
+  const [recordModal, setRecordModal] = useState<{ id?: string } | null>(null);
+  const [changeRequest, setChangeRequest] = useState<{ targetId: string; targetName: string } | null>(null);
+  const [requestDraft, setRequestDraft] = useState({ request_type: 'update' as 'delete' | 'replace' | 'update', details: '' });
+  const [recordDraft, setRecordDraft] = useState({ record_type: 'goal', title: '', details: '', review_date: today(), rating: '' });
+  const load = useCallback(async () => {
+    if (!supabase || !employee) return;
+    const [recordsResult, requestsResult] = await Promise.all([
+      supabase.from('performance_records').select('*').eq('employee_profile_id', employee.id).order('review_date', { ascending: false }),
+      supabase.from('employee_record_change_requests').select('*').eq('employee_profile_id', employee.id).eq('target_table', 'performance_records').order('created_at', { ascending: false }),
+    ]);
+    if (recordsResult.error || requestsResult.error) onNotice(recordsResult.error?.message ?? requestsResult.error?.message ?? 'Performance records could not be loaded.');
+    else { setRecords(recordsResult.data ?? []); setRequests((requestsResult.data ?? []) as RecordChangeRequest[]); }
+  }, [employee, onNotice]);
+  useEffect(() => { void load(); }, [load]);
+  useWorkforceRealtime(workspaceId, 'performance_records,employee_record_change_requests', load);
+  const openRecord = (record?: { id: string; record_type: string; title: string; details: string | null; review_date: string; rating: number | null }) => { setRecordDraft({ record_type: record?.record_type ?? 'goal', title: record?.title ?? '', details: record?.details ?? '', review_date: record?.review_date ?? today(), rating: record?.rating == null ? '' : String(record.rating) }); setRecordModal(record ? { id: record.id } : {}); };
+  const saveRecord = async () => { if (!supabase || !employee || !recordModal) return; const rating = recordDraft.rating.trim() === '' ? null : Number(recordDraft.rating); if (!recordDraft.title.trim() || (rating != null && (!Number.isFinite(rating) || rating < 0 || rating > 5))) { onNotice('Enter a title and an optional rating from 0 to 5.'); return; } const payload = { record_type: recordDraft.record_type, title: recordDraft.title.trim(), details: recordDraft.details.trim() || null, review_date: recordDraft.review_date, rating, updated_at: new Date().toISOString() }; const result = recordModal.id ? await supabase.from('performance_records').update(payload).eq('id', recordModal.id) : await supabase.from('performance_records').insert({ ...payload, workspace_id: workspaceId, employee_profile_id: employee.id, created_by: userId }); if (result.error) onNotice(result.error.message); else { setRecordModal(null); await load(); } };
+  const deleteRecord = async (id: string) => { if (!supabase || !canManage) return; const { error } = await supabase.from('performance_records').delete().eq('id', id); if (error) onNotice(error.message); else await load(); };
+  const submitChangeRequest = async () => { if (!supabase || !employee || !changeRequest) return; const { error } = await supabase.from('employee_record_change_requests').insert({ workspace_id: workspaceId, employee_profile_id: employee.id, target_table: 'performance_records', target_id: changeRequest.targetId, request_type: requestDraft.request_type, details: requestDraft.details.trim() || null, requested_by: userId }); if (error) onNotice(error.message); else { setChangeRequest(null); setRequestDraft({ request_type: 'update', details: '' }); onNotice('Request sent for approval.'); await load(); } };
+  const reviewChangeRequest = async (id: string, status: 'approved' | 'rejected') => { if (!supabase || !canManage) return; const { error } = await supabase.from('employee_record_change_requests').update({ status, reviewed_by: userId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id); if (error) onNotice(error.message); else await load(); };
+  const recordNames = Object.fromEntries(records.map((record) => [record.id, record.title]));
+  return <div className="mt-5"><EmployeeContextHeader employee={employee} profiles={profiles} theme={theme} label="Performance" />{canManage && <button onClick={() => openRecord()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Add record</button>}{canManage && <ChangeRequestInbox requests={requests} targetNames={recordNames} theme={theme} onReview={reviewChangeRequest} />}<div className="mt-4 space-y-3">{records.map((record) => <div key={record.id} className={cn('rounded-lg border p-4', panel(theme))}><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><strong>{record.title}</strong><StatusPill value={record.record_type} /></div><p className={cn('mt-2 text-sm', muted(theme))}>{record.details || 'No details'}</p><span className={cn('mt-2 block text-xs', muted(theme))}>{formatDate(record.review_date)}{record.rating != null ? ` · ${record.rating}/5` : ''}</span></div>{canManage ? <div className="flex shrink-0 gap-2"><IconAction label="Edit performance record" icon={Pencil} onClick={() => openRecord(record)} /><IconAction label="Delete performance record" icon={Trash2} onClick={() => void deleteRecord(record.id)} /></div> : <button onClick={() => setChangeRequest({ targetId: record.id, targetName: record.title })} className={cn('inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-semibold', buttonSurface(theme))}><RefreshCw className="h-3.5 w-3.5" />Action</button>}</div></div>)}</div>{records.length === 0 && <EmptyState icon={Gauge} title="No performance records" body="Reviews, achievements, warnings, and goals will appear here." theme={theme} />}{changeRequest && <WorkforceModal title="Request performance change" theme={theme} onClose={() => setChangeRequest(null)} footer={<><button onClick={() => setChangeRequest(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void submitChangeRequest()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Send request</button></>}><p className={cn('mb-4 text-sm', muted(theme))}>{changeRequest.targetName}</p><div className="grid gap-4 sm:grid-cols-2"><SelectField label="Action needed" value={requestDraft.request_type} options={['update', 'replace', 'delete']} onChange={(value) => setRequestDraft({ ...requestDraft, request_type: value as 'delete' | 'replace' | 'update' })} theme={theme} /><Field label="Details" value={requestDraft.details} onChange={(value) => setRequestDraft({ ...requestDraft, details: value })} theme={theme} wide /></div></WorkforceModal>}{recordModal && <WorkforceModal title={recordModal.id ? 'Edit performance record' : 'Add performance record'} theme={theme} onClose={() => setRecordModal(null)} footer={<><button onClick={() => setRecordModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void saveRecord()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save record</button></>}><div className="grid gap-4 sm:grid-cols-2"><SelectField label="Type" value={recordDraft.record_type} options={['review', 'achievement', 'warning', 'goal']} onChange={(value) => setRecordDraft({ ...recordDraft, record_type: value })} theme={theme} /><Field label="Review date" type="date" value={recordDraft.review_date} onChange={(value) => setRecordDraft({ ...recordDraft, review_date: value })} theme={theme} /><Field label="Title" value={recordDraft.title} onChange={(value) => setRecordDraft({ ...recordDraft, title: value })} theme={theme} wide /><Field label="Details" value={recordDraft.details} onChange={(value) => setRecordDraft({ ...recordDraft, details: value })} theme={theme} wide /><Field label="Rating (0-5)" type="number" value={recordDraft.rating} onChange={(value) => setRecordDraft({ ...recordDraft, rating: value })} theme={theme} /></div></WorkforceModal>}</div>;
 }
 
-function CompensationPanel({ workspaceId, userId, employee, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
+function CompensationPanel({ workspaceId, userId, employee, profiles, canManage, theme, onNotice }: { workspaceId: string; userId: string; employee: EmployeeProfile | null; profiles: Record<string, AppProfile>; canManage: boolean; theme: Theme; onNotice: (message: string) => void }) {
   const [country, setCountry] = useState('US');
   const [compensationType, setCompensationType] = useState('hourly');
   const [amount, setAmount] = useState('');
@@ -397,10 +607,12 @@ function CompensationPanel({ workspaceId, userId, employee, canManage, theme, on
   const [payrollFields, setPayrollFields] = useState<EmployeePayrollField[]>([]);
   const [addingField, setAddingField] = useState(false);
   const [fieldName, setFieldName] = useState('');
+  const [customFieldName, setCustomFieldName] = useState('');
   const [fieldKind, setFieldKind] = useState<'earning' | 'deduction'>('deduction');
   const [fieldCalculation, setFieldCalculation] = useState<'fixed' | 'percentage'>('percentage');
   const [fieldValue, setFieldValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const canCreateFields = canManage;
   const idFields = country === 'PH' ? ['TIN', 'SSS Number', 'PhilHealth Number', 'Pag-IBIG Number'] : country === 'US' ? ['SSN', 'TIN'] : ['Tax ID', 'Government ID'];
 
@@ -449,26 +661,35 @@ function CompensationPanel({ workspaceId, userId, employee, canManage, theme, on
   const addPayrollField = async () => {
     if (!supabase || !employee || !canManage) return;
     const value = Number(fieldValue);
-    if (!fieldName.trim() || !Number.isFinite(value) || value < 0) return onNotice('Enter a field name and a valid non-negative value.');
+    const resolvedFieldName = fieldName === '__other__' ? customFieldName.trim() : fieldName.trim();
+    if (!resolvedFieldName || !Number.isFinite(value) || value < 0) return onNotice('Enter a field name and a valid non-negative value.');
     const { error } = await supabase.from('employee_payroll_fields').insert({
-      workspace_id: workspaceId, employee_profile_id: employee.id, name: fieldName.trim(),
+      workspace_id: workspaceId, employee_profile_id: employee.id, name: resolvedFieldName,
       item_kind: fieldKind, calculation_type: fieldCalculation, value,
       country_code: country || null, created_by: userId,
     });
     if (error) return onNotice(error.message);
-    setAddingField(false); setFieldName(''); setFieldValue(''); setFieldKind('deduction'); setFieldCalculation('percentage');
+    setAddingField(false); setFieldName(''); setCustomFieldName(''); setFieldValue(''); setFieldKind('deduction'); setFieldCalculation('percentage');
     await loadCompensation();
   };
 
-  const deletePayrollField = async (fieldId: string) => {
-    if (!supabase || !canManage || !window.confirm('Delete this payroll field?')) return;
-    const { error } = await supabase.from('employee_payroll_fields').delete().eq('id', fieldId);
-    if (error) onNotice(error.message); else await loadCompensation();
+  const deletePayrollField = (fieldId: string) => {
+    if (!supabase || !canManage) return;
+    setConfirmDialog({
+      title: 'Delete payroll item?',
+      body: 'This employee-specific payroll item will be removed.',
+      confirmLabel: 'Delete item',
+      onConfirm: async () => {
+        const { error } = await supabase.from('employee_payroll_fields').delete().eq('id', fieldId);
+        if (error) throw new Error(error.message);
+        await loadCompensation();
+      },
+    });
   };
 
   if (!employee) return <EmptyState icon={Banknote} title="Select an employee" body="Choose an employee to manage compensation." theme={theme} />;
   const suggestedFields = payrollFieldSuggestions(country);
-  return <div className={cn('mt-5 max-w-5xl rounded-lg border p-5', panel(theme))}>
+  return <><div className="mt-5"><EmployeeContextHeader employee={employee} profiles={profiles} theme={theme} label="Compensation" /></div><div className={cn('mt-4 w-full rounded-lg border p-5', panel(theme))}>
     <div className="mb-5"><h3 className="font-bold">Encrypted payroll information</h3><p className={cn('mt-1 text-sm', muted(theme))}>Compensation, payment, tax, and government details are encrypted separately.</p></div>
     <div className="grid gap-4 sm:grid-cols-2">
       <SelectField label="Compensation type" value={compensationType} options={['hourly', 'daily', 'weekly', 'semimonthly', 'monthly', 'annual']} onChange={setCompensationType} theme={theme} />
@@ -484,17 +705,27 @@ function CompensationPanel({ workspaceId, userId, employee, canManage, theme, on
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold">Payroll items</h3><p className={cn('mt-1 text-sm', muted(theme))}>Employee-specific earnings and deductions included in payroll calculations.</p></div>{canCreateFields && <button onClick={() => setAddingField((open) => !open)} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />Add field</button>}</div>
       {addingField && <div className={cn('mt-4 rounded-lg border p-4', panel(theme))}>
         <div className="grid gap-3 md:grid-cols-4">
-          <label className="md:col-span-2"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Field name</span><input list="payroll-field-suggestions" value={fieldName} onChange={(event) => setFieldName(event.target.value)} placeholder="e.g. Medicare" className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))} /><datalist id="payroll-field-suggestions">{suggestedFields.map((name) => <option key={name} value={name} />)}</datalist></label>
+          <SelectField label="Field name" value={fieldName} options={['', ...suggestedFields, '__other__']} optionLabels={{ '': 'Select item', __other__: 'Other' }} onChange={(value) => setFieldName(value)} theme={theme} />
+          {fieldName === '__other__' && <Field label="Custom field name" value={customFieldName} onChange={setCustomFieldName} theme={theme} />}
           <SelectField label="Type" value={fieldKind} options={['earning', 'deduction']} onChange={(value) => setFieldKind(value as 'earning' | 'deduction')} theme={theme} />
           <SelectField label="Calculation" value={fieldCalculation} options={['percentage', 'fixed']} onChange={(value) => setFieldCalculation(value as 'fixed' | 'percentage')} theme={theme} />
           <Field label={fieldCalculation === 'percentage' ? 'Percentage' : 'Fixed amount'} type="number" value={fieldValue} onChange={setFieldValue} theme={theme} />
         </div>
         <div className="mt-3 flex justify-end gap-2"><button onClick={() => setAddingField(false)} className={cn('h-9 rounded-lg border px-3 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button onClick={() => void addPayrollField()} className="h-9 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save field</button></div>
       </div>}
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">{payrollFields.map((field) => <div key={field.id} className="flex items-center justify-between gap-3 rounded-lg border border-current/10 px-3 py-3"><span><strong className="block text-sm">{field.name}</strong><span className={cn('text-xs capitalize', muted(theme))}>{field.item_kind} · {field.calculation_type} · {field.value}{field.calculation_type === 'percentage' ? '%' : ''}</span></span>{canCreateFields && <IconAction label="Delete payroll field" icon={Trash2} onClick={() => void deletePayrollField(field.id)} />}</div>)}</div>
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{payrollFields.map((field) => <div key={field.id} className="flex items-center justify-between gap-3 rounded-lg border border-current/10 px-3 py-3"><span><strong className="block text-sm">{field.name}</strong><span className={cn('text-xs capitalize', muted(theme))}>{field.item_kind} · {field.calculation_type} · {field.value}{field.calculation_type === 'percentage' ? '%' : ''}</span></span>{canCreateFields && <IconAction label="Delete payroll field" icon={Trash2} onClick={() => void deletePayrollField(field.id)} />}</div>)}</div>
       {payrollFields.length === 0 && <p className={cn('mt-4 rounded-lg border border-dashed p-4 text-sm', muted(theme))}>No employee-specific payroll items yet. Suggested for {country}: {suggestedFields.join(', ')}.</p>}
     </div>
-  </div>;
+  </div>
+  {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
+  </>;
+}
+
+
+function ChangeRequestInbox({ requests, targetNames, theme, onReview }: { requests: RecordChangeRequest[]; targetNames: Record<string, string>; theme: Theme; onReview: (id: string, status: 'approved' | 'rejected') => Promise<void> }) {
+  const pending = requests.filter((request) => request.status === 'pending');
+  if (pending.length === 0) return null;
+  return <section className={cn('mt-4 rounded-lg border p-4', panel(theme))}><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-bold">Change requests</h3><StatusPill value={`${pending.length} pending`} /></div><div className="space-y-2">{pending.map((request) => <div key={request.id} className={cn('flex items-start justify-between gap-3 rounded-lg border p-3', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><div className="min-w-0"><p className="text-sm font-semibold capitalize">{request.request_type} {targetNames[request.target_id] ?? 'record'}</p><p className={cn('mt-1 text-xs', muted(theme))}>{request.details || 'No details provided.'}</p></div><div className="flex shrink-0 gap-2"><IconAction label="Approve request" icon={Check} onClick={() => void onReview(request.id, 'approved')} /><IconAction label="Reject request" icon={X} onClick={() => void onReview(request.id, 'rejected')} /></div></div>)}</div></section>;
 }
 
 function useWorkforceRealtime(workspaceId: string, tables: string, reload: () => Promise<void>) {
@@ -507,6 +738,27 @@ function useWorkforceRealtime(workspaceId: string, tables: string, reload: () =>
   }, [reload, tables, workspaceId]);
 }
 
+function WorkforceModal({ title, theme, children, footer, onClose }: { title: string; theme: Theme; children: ReactNode; footer: ReactNode; onClose: () => void }) {
+  return <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={title}><div className={cn('w-full max-w-2xl rounded-xl border p-5 shadow-2xl', panel(theme))}><div className="mb-5 flex items-center justify-between gap-4"><h3 className="text-lg font-bold">{title}</h3><button aria-label="Close" title="Close" onClick={onClose} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', buttonSurface(theme))}><X className="h-4 w-4" /></button></div>{children}<div className="mt-6 flex justify-end gap-2">{footer}</div></div></div>;
+}
+
+function WorkforceConfirmModal({ dialog, theme, onClose, onNotice }: { dialog: WorkforceConfirmState; theme: Theme; onClose: () => void; onNotice: (message: string) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const confirm = async () => {
+    setSubmitting(true);
+    try {
+      await dialog.onConfirm();
+      onClose();
+    } catch (error) {
+      onNotice(errorMessage(error));
+      setSubmitting(false);
+    }
+  };
+  return <WorkforceModal title={dialog.title} theme={theme} onClose={onClose} footer={<><button type="button" onClick={onClose} disabled={submitting} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void confirm()} disabled={submitting} className="h-10 rounded-lg bg-[#B91C1C] px-4 text-sm font-bold text-white">{submitting ? 'Working…' : dialog.confirmLabel}</button></>}><p className={cn('text-sm leading-6', muted(theme))}>{dialog.body}</p></WorkforceModal>;
+}
+
+function daysBetweenInclusive(start: string, end: string) { return Math.max(0, Math.round((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1); }
+
 function ModuleFrame({ icon: Icon, title, subtitle, theme, children }: { icon: typeof Clock3; title: string; subtitle: string; theme: Theme; children: ReactNode }) { return <div className="min-h-0 flex-1 overflow-y-auto pr-1 scroll-area"><header className={cn('mb-5 flex items-center gap-3 border-b pb-4', border(theme))}><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Icon className="h-5 w-5" /></div><div><h2 className="text-xl font-bold">{title}</h2><p className={cn('text-sm', muted(theme))}>{subtitle}</p></div></header>{children}</div>; }
 function Metric({ label, value, theme, accent = false }: { label: string; value: string; theme: Theme; accent?: boolean }) { return <div className={cn('rounded-lg border p-4', panel(theme), accent && 'border-[var(--accent)]')}><p className={cn('text-xs font-semibold uppercase tracking-[0.12em]', muted(theme))}>{label}</p><p className={cn('mt-2 text-2xl font-bold capitalize', accent && 'text-[var(--accent-strong)]')}>{value}</p></div>; }
 function DataTable({ headers, theme, children }: { headers: string[]; theme: Theme; children: ReactNode }) { return <div className={cn('overflow-x-auto rounded-lg border', panel(theme))}><table className="w-full min-w-[720px] border-collapse text-left"><thead><tr className={cn('border-b', border(theme))}>{headers.map((header) => <th key={header} className={cn('px-4 py-3 text-xs uppercase tracking-[0.1em]', muted(theme))}>{header}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
@@ -514,7 +766,7 @@ function Cell({ children, strong = false }: { children: ReactNode; strong?: bool
 function ActionButton({ icon: Icon, label, onClick, disabled, secondary, danger }: { icon: typeof Play; label: string; onClick: () => void; disabled?: boolean; secondary?: boolean; danger?: boolean }) { return <button onClick={onClick} disabled={disabled} className={cn('inline-flex h-12 items-center gap-2 rounded-lg px-5 text-sm font-bold disabled:opacity-50', danger ? 'bg-[#B91C1C] text-white' : secondary ? 'border border-[var(--accent)] bg-transparent text-[var(--accent-strong)]' : 'bg-[var(--accent)] text-[var(--accent-ink)]')}><Icon className="h-4 w-4" />{label}</button>; }
 function Field({ label, value, onChange, theme, type = 'text', wide, compact }: { label: string; value: string; onChange: (value: string) => void; theme: Theme; type?: string; wide?: boolean; compact?: boolean }) { return <label className={cn('block', wide && 'sm:col-span-2', compact && 'w-40')}><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm outline-none', panel(theme), compact && 'h-10')} /></label>; }
 function SmallInput({ label, value, onChange, theme }: { label: string; value: string | number; onChange: (value: string) => void; theme: Theme }) { return <label><span className={cn('mb-1 block text-[11px]', muted(theme))}>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} className={cn('h-9 w-full rounded-lg border px-2 text-xs', panel(theme))} /></label>; }
-function SelectField({ label, value, options, onChange, theme, compact }: { label: string; value: string; options: string[]; onChange: (value: string) => void; theme: Theme; compact?: boolean }) { return <label className={cn('block', compact && 'w-44')}><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm capitalize', panel(theme), compact && 'h-10')}>{options.map((option) => <option key={option} value={option}>{option ? option.replaceAll('_', ' ') : 'Not set'}</option>)}</select></label>; }
+function SelectField({ label, value, options, optionLabels, onChange, theme, compact }: { label: string; value: string; options: string[]; optionLabels?: Record<string, string>; onChange: (value: string) => void; theme: Theme; compact?: boolean }) { return <label className={cn('block', compact && 'w-44')}><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm capitalize', panel(theme), compact && 'h-10')}>{options.map((option) => <option key={option} value={option}>{optionLabels?.[option] ?? (option ? option.replaceAll('_', ' ') : 'Not set')}</option>)}</select></label>; }
 function Segmented({ options, value, onChange, theme }: { options: string[][]; value: string; onChange: (value: string) => void; theme: Theme }) { return <div className={cn('inline-flex rounded-lg border p-1', panel(theme))}>{options.map(([key, label]) => <button key={key} onClick={() => onChange(key)} className={cn('h-9 rounded-md px-4 text-sm font-semibold', value === key ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>{label}</button>)}</div>; }
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) { return <label className="flex items-center justify-between gap-3 py-1.5 text-sm"><span>{label}</span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" /></label>; }
 function StatusPill({ value }: { value: string }) { return <span className="inline-flex rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold capitalize text-[var(--accent-strong)]">{value.replaceAll('_', ' ')}</span>; }
@@ -526,11 +778,32 @@ function border(theme: Theme) { return theme === 'dark' ? 'border-white/10' : 'b
 function muted(theme: Theme) { return theme === 'dark' ? 'text-[#AAA4B3]' : 'text-[#716A78]'; }
 function buttonSurface(theme: Theme) { return theme === 'dark' ? 'border-white/15 bg-white/[0.05] hover:bg-white/10' : 'border-[#DCD7E1] bg-white hover:bg-[#F7F6F9]'; }
 function employeeName(employee: EmployeeProfile | undefined | null, profiles: Record<string, AppProfile>) { if (!employee) return 'Employee'; const profile = profiles[employee.user_id]; return [employee.first_name, employee.last_name].filter(Boolean).join(' ') || profile?.full_name || profile?.display_name || 'Employee'; }
+function hrPersonLabel(role: WorkspaceRole | undefined) { if (role === 'owner') return 'Administrator'; if (role === 'guest') return 'Guest'; return 'Employee'; }
 function payrollFieldSuggestions(country: string) {
   if (country === 'US') return ['Medicare', 'Social Security', 'Federal Tax', 'State Income Tax', 'State Disability Insurance'];
   if (country === 'PH') return ['SSS', 'Pag-IBIG', 'PhilHealth', 'Withholding Tax'];
   return ['Income Tax', 'Social Insurance', 'Health Insurance', 'Pension', 'Other Deduction'];
 }
+function validateWorkforceUpload(file: File, imageOnly = false) {
+  if (file.size <= 0) return 'The selected file is empty.';
+  if (file.size > MAX_WORKFORCE_UPLOAD_BYTES) return `Workforce uploads must be ${formatFileSize(MAX_WORKFORCE_UPLOAD_BYTES)} or smaller for this release.`;
+  if (imageOnly && !file.type.startsWith('image/')) return 'Choose an image file.';
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (BLOCKED_WORKFORCE_FILE_EXTENSIONS.has(extension)) return 'This file type is blocked for security.';
+  return '';
+}
+
+function sanitizeWorkforceFilename(filename: string) {
+  const cleaned = filename.normalize('NFKD').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'file';
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function workedHours(entry: TimeEntry, now: number) { const end = entry.clock_out ? new Date(entry.clock_out).getTime() : now; const activeBreak = entry.break_started_at ? Math.max(0, now - new Date(entry.break_started_at).getTime()) / 1000 : 0; return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3600000 - (entry.break_seconds + activeBreak) / 3600); }
 function formatDuration(hours: number) { const totalMinutes = Math.max(0, Math.round(hours * 60)); return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`; }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }

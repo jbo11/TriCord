@@ -89,7 +89,7 @@ Required correction:
 
 ### P0: Subscription entitlements are not enforced
 
-The pricing matrix is a strategy document. Hub limits, member limits, Room limits, storage quotas, message retention, upload size by plan, integrations, automations, AI allowances, and security features are not enforced server-side. Billing checkout, webhook verification, subscription lifecycle handling, invoices, grace periods, and downgrade behavior are also absent.
+The pricing matrix is a strategy document. Hub limits, member limits, Room limits, storage quotas, message retention, integrations, automations, and security features are not fully enforced server-side. Direct uploads are capped at 20 MB in this release. Billing checkout, webhook verification, subscription lifecycle handling, invoices, grace periods, and downgrade behavior are also absent.
 
 Required correction:
 
@@ -215,7 +215,7 @@ Recommended launch scope:
 
 - Complete an OWASP ASVS-based security review focused on authentication, tenant isolation, access control, uploads, SSRF/link previews, error handling, and audit logging.
 - Verify Supabase production checklist items: RLS, SSL enforcement, rate limits, backups/PITR, email delivery, custom SMTP, and spend controls.
-- Add upload MIME/content validation and malware scanning for business documents.
+- Add malware scanning for business documents and keep the 20 MB file limit enforced at both app and storage layers.
 - Define incident response, backup restore testing, data export, account deletion, privacy requests, and breach notification procedures.
 - Publish Terms of Service, Privacy Policy, subprocessors, retention policy, and acceptable-use rules before public onboarding.
 - Add staging and production environments with separate keys and data.

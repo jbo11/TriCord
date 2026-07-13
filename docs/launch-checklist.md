@@ -16,31 +16,29 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 
 ### Domain And Hosting
 
-- Buy and configure the production domain, for example `tricord.app`.
-- If deploying on GitHub Pages with a custom domain, add the domain in GitHub Pages settings.
+- Buy and configure the production domain, for example `tricord.cc`.
+- In GoDaddy/cPanel hosting, point the domain to the hosting account and upload the built files to `public_html/`.
 - Add the correct DNS records from the host dashboard.
-- Set the GitHub repository variable `VITE_BASE_PATH=/` for a custom root domain.
-- Keep `VITE_BASE_PATH=/TriCord/` only while serving from `https://jbo11.github.io/TriCord/`.
-- Confirm `https://tricord.app/` loads the marketing homepage and `https://tricord.app/app` opens the application sign-in flow.
+- Build with `VITE_BASE_PATH=/` for the root domain.
+- Upload the contents of `dist/`, not the project source, to GoDaddy `public_html/`.
+- Confirm `https://tricord.cc/` loads the marketing homepage and `https://tricord.cc/app` opens the application sign-in flow.
 - Confirm deep links under `/app` work after a hard refresh; the included static `404.html` fallback restores SPA routes for static hosts.
 - After DNS is active, confirm HTTPS is enforced.
 
-### GitHub Actions
+### Static Build And Upload
 
-- Add or confirm these repository secrets or variables:
-  - `VITE_SUPABASE_URL`
-  - `VITE_SUPABASE_ANON_KEY`
-  - `VITE_BASE_PATH`
-- Confirm the Pages workflow completes after every push to `main`.
-- Confirm the deployed page loads the latest commit after a hard refresh.
+- Confirm `.env.local` contains the production Supabase URL and anon key.
+- Run `VITE_BASE_PATH=/ npm run build`.
+- Confirm `dist/index.html`, `dist/404.html`, and `dist/.htaccess` exist.
+- Upload everything inside `dist/` to GoDaddy `public_html/`.
+- Confirm the deployed page loads the latest build after a hard refresh.
 
 ### Supabase Auth
 
-- Set the Site URL to `https://tricord.app/app` so magic links return to the application.
+- Set the Site URL to `https://tricord.cc/app` so magic links return to the application.
 - Add redirect URLs for:
-  - `https://tricord.app/app`
-  - `https://tricord.app/*`
-  - The current GitHub Pages URL while it remains active.
+  - `https://tricord.cc/app`
+  - `https://tricord.cc/*`
   - Local development URLs such as `http://localhost:3000/*`.
 - Configure production SMTP so magic links come from a branded email sender.
 - Check magic-link expiry and rate limits.
@@ -55,15 +53,30 @@ TriCord can be prepared for a public beta launch once the checklist below is com
   - `employee-documents`
   - `avatars`
 - Confirm storage upload limits match the SaaS plan rules before accepting broad customer usage.
+- Confirm direct Supabase uploads are capped at 20 MB.
+- Confirm files larger than 20 MB fail with guidance to share a Google Drive, Dropbox, OneDrive, or other cloud-storage link.
 - Review Realtime settings for `posts`, `comments`, `tasks`, and workforce tables.
 
 ### Supabase Edge Functions
 
 - Deploy `link-preview` before relying on rich URL cards in production.
-- Add function secrets:
+- Deploy Stripe billing functions before enabling paid upgrades:
+  - `create-checkout-session`
+  - `create-billing-portal-session`
+  - `stripe-webhook`
+- Add shared function secrets:
   - `SUPABASE_URL`
   - `SUPABASE_ANON_KEY`
   - `SUPABASE_SERVICE_ROLE_KEY`
+  - `APP_URL=https://tricord.cc`
+- Add Stripe function secrets:
+  - `STRIPE_SECRET_KEY`
+  - `STRIPE_WEBHOOK_SECRET`
+  - `STRIPE_PLUS_MONTHLY_PRICE_ID`
+  - `STRIPE_PLUS_YEARLY_PRICE_ID`
+  - `STRIPE_PRO_MONTHLY_PRICE_ID`
+  - `STRIPE_PRO_YEARLY_PRICE_ID`
+- Configure the Stripe webhook endpoint to call the deployed `stripe-webhook` function for checkout and subscription events.
 - Confirm link previews reject private network URLs and require an authenticated user.
 
 ### Privacy, Legal, And Business Operations

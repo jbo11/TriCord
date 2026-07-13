@@ -6,6 +6,7 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type SortMode = 'active' | 'newest' | 'assigned' | 'archived';
 export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'timekeeping' | 'hr' | 'payroll' | 'reports' | 'admin';
 export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
+export type EmailProvider = 'gmail' | 'outlook' | 'microsoft365' | 'resend' | 'smtp';
 
 export interface AppProfile {
   id: string;
@@ -27,7 +28,7 @@ export interface AppWorkspace {
   owner_id: string;
   logo_url: string | null;
   brand_color: string | null;
-  plan: 'free' | 'pro' | 'business' | 'enterprise';
+  plan: 'free' | 'plus' | 'pro' | 'business' | 'enterprise';
   created_at: string;
   role?: WorkspaceRole;
 }
@@ -63,6 +64,25 @@ export interface UserPrivateProfile {
   bio: string | null;
 }
 
+export interface UserEmailAccount {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  provider: EmailProvider;
+  email_address: string;
+  display_name: string | null;
+  token_expiry: string | null;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_username: string | null;
+  smtp_encryption: string | null;
+  is_default: boolean;
+  is_connected: boolean;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AppSpace {
   id: string;
   workspace_id: string;
@@ -72,6 +92,8 @@ export interface AppSpace {
   description: string | null;
   archived_at: string | null;
   created_by: string;
+  email_alias?: string | null;
+  email_forwarding_enabled?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -118,6 +140,7 @@ export interface AppAttachment {
   byte_size: number;
   created_at: string;
   signed_url?: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AppLinkPreview {

@@ -19,7 +19,23 @@ export function canOpenView(
 ) {
   if (!role) return false;
   if (view === 'feed' || view === 'tasks') return true;
-  if (view === 'knowledge' || view === 'timekeeping' || view === 'hr' || view === 'payroll') return role !== 'guest';
+  if (view === 'knowledge') return role !== 'guest';
+  if (view === 'timekeeping') {
+    if (role === 'owner' || role === 'member') return true;
+    return role === 'admin' && (
+      hasWorkspaceCapability(role, capabilities, 'manage_timekeeping')
+      || hasWorkspaceCapability(role, capabilities, 'correct_attendance')
+    );
+  }
+  if (view === 'hr') {
+    if (role === 'owner' || role === 'member') return true;
+    return role === 'admin' && (
+      hasWorkspaceCapability(role, capabilities, 'manage_hr')
+      || hasWorkspaceCapability(role, capabilities, 'approve_leave')
+      || hasWorkspaceCapability(role, capabilities, 'manage_payroll')
+    );
+  }
+  if (view === 'payroll') return hasWorkspaceCapability(role, capabilities, 'manage_payroll') || hasWorkspaceCapability(role, capabilities, 'approve_payroll');
   if (view === 'reports') return hasWorkspaceCapability(role, capabilities, 'view_reports');
   if (view === 'admin') {
     if (role === 'owner') return true;

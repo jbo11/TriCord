@@ -34,3 +34,6 @@ supabase/.temp/
 # Misc
 *.tmp
 *.swp
+# Local generated artifacts
+output/
+tmp/

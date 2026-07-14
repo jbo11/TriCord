@@ -4122,8 +4122,8 @@ function SettingsModal({
               <section className={cn('rounded-lg border p-4', surface(theme))}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Business Modules</p>
-                    <p className={cn('mt-2 text-sm leading-6', muted(theme))}>Optional recordkeeping modules stay off until an Owner enables them for this Hub.</p>
+                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub Settings · Business Modules</p>
+                    <p className={cn('mt-2 text-sm leading-6', muted(theme))}>These are Hub-level settings. Optional recordkeeping modules stay off until an Owner enables them for this Hub.</p>
                   </div>
                   <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
                 </div>

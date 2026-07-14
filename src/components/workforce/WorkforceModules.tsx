@@ -109,6 +109,8 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
+  const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string } | null>(null);
+  const policySignatureRef = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
   const selfieRef = useRef<HTMLInputElement | null>(null);
@@ -139,12 +141,22 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     setEntries((entriesResult.data ?? []) as TimeEntry[]);
     setEvents((eventsResult.data ?? []) as TimeEvent[]);
     setPolicies(nextPolicies);
+    const ownPolicy = nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null;
+    if ((role === 'admin' || role === 'member') && ownEmployee && ownPolicy) {
+      const signature = attendancePolicySignature(ownPolicy);
+      const storageKey = attendancePolicyStorageKey(workspaceId, ownEmployee.id);
+      const previousSignature = window.localStorage.getItem(storageKey);
+      const notice = attendancePolicyChangeNotice(previousSignature, ownPolicy);
+      if (notice && policySignatureRef.current !== signature) setPolicyNotice(notice);
+      window.localStorage.setItem(storageKey, signature);
+      policySignatureRef.current = signature;
+    }
     if (canConfigure) {
       setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
     } else {
-      setSettings(nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null);
+      setSettings(ownPolicy);
     }
-  }, [canConfigure, onNotice, userId, workspaceId]);
+  }, [canConfigure, onNotice, role, userId, workspaceId]);
 
   useEffect(() => {
     if (!canConfigure) return;
@@ -159,6 +171,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     const channel = supabase.channel(`workforce-time-${workspaceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries', filter: `workspace_id=eq.${workspaceId}` }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_events', filter: `workspace_id=eq.${workspaceId}` }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_timekeeping_policies', filter: `workspace_id=eq.${workspaceId}` }, () => void load())
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
   }, [load, workspaceId]);
@@ -323,9 +336,11 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         </aside>}
       </div>
     </ModuleFrame>
+    {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={<button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">I understand</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
     {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
 }
+
 
 function TimeEvidencePanel({ events, theme, onOpenSelfie }: { events: TimeEvent[]; theme: Theme; onOpenSelfie: (path: string) => Promise<void> }) {
   if (events.length === 0) return <p className={cn('text-sm', muted(theme))}>No captured clock-in evidence for this entry yet.</p>;
@@ -815,6 +830,52 @@ function workedHours(entry: TimeEntry, now: number) { const end = entry.clock_ou
 function formatDuration(hours: number) { const totalMinutes = Math.max(0, Math.round(hours * 60)); return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`; }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
 function formatDate(value: string) { const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value); return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
+
+const ATTENDANCE_POLICY_NOTICE_KEYS = ['capture_location', 'capture_ip', 'capture_device', 'require_selfie', 'enforce_geofence'] as const;
+
+function attendancePolicyStorageKey(workspaceId: string, employeeProfileId: string) {
+  return `tricord-attendance-policy:${workspaceId}:${employeeProfileId}`;
+}
+
+function attendancePolicySnapshot(policy: EmployeeTimekeepingPolicy) {
+  return {
+    capture_location: policy.capture_location,
+    capture_ip: policy.capture_ip,
+    capture_device: policy.capture_device,
+    require_selfie: policy.require_selfie,
+    enforce_geofence: policy.enforce_geofence,
+  };
+}
+
+function attendancePolicySignature(policy: EmployeeTimekeepingPolicy) {
+  return JSON.stringify(attendancePolicySnapshot(policy));
+}
+
+function attendancePolicyChangeNotice(previousSignature: string | null, policy: EmployeeTimekeepingPolicy) {
+  const current = attendancePolicySnapshot(policy);
+  if (!previousSignature) {
+    const activeRequirements = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => current[key]).map(settingLabel);
+    if (activeRequirements.length === 0) return null;
+    return {
+      title: 'Attendance Policy Notice',
+      body: `Your organization has enabled attendance requirements for your clock-in or clock-out records: ${activeRequirements.join(', ')}.`,
+    };
+  }
+
+  try {
+    const previous = JSON.parse(previousSignature) as Record<(typeof ATTENDANCE_POLICY_NOTICE_KEYS)[number], boolean>;
+    const enabled = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => !previous[key] && current[key]).map(settingLabel);
+    const disabled = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => previous[key] && !current[key]).map(settingLabel);
+    if (enabled.length === 0 && disabled.length === 0) return null;
+    const parts = [];
+    if (enabled.length > 0) parts.push(`Enabled: ${enabled.join(', ')}.`);
+    if (disabled.length > 0) parts.push(`Disabled: ${disabled.join(', ')}.`);
+    return { title: 'Attendance Policy Updated', body: parts.join(' ') };
+  } catch {
+    return null;
+  }
+}
+
 function settingLabel(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) { return ({ capture_location: 'GPS location', capture_ip: 'IP address', capture_device: 'Device information', require_selfie: 'Photo verification', enforce_geofence: 'Geofence restriction' })[key]; }
 
 function attendanceSettingNotice(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) {

@@ -1928,10 +1928,12 @@ function Sidebar({
                       <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                       </div>
                       <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                       </div>
                     </>
                   )}

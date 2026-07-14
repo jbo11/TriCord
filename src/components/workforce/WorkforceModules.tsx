@@ -90,6 +90,7 @@ interface WorkforceConfirmState {
   title: string;
   body: string;
   confirmLabel: string;
+  tone?: 'danger' | 'accent';
   onConfirm: () => Promise<void>;
 }
 
@@ -324,7 +325,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
             {(['capture_location', 'capture_ip', 'capture_device', 'require_selfie', 'enforce_geofence'] as const).map((key) => <div key={key}><Toggle checked={settings[key]} onChange={(checked) => {
               if (checked) {
                 const notice = attendanceSettingNotice(key);
-                setConfirmDialog({ title: notice.title, body: notice.body, confirmLabel: 'Continue', onConfirm: async () => setSettings({ ...settings, [key]: true }) });
+                setConfirmDialog({ title: notice.title, body: notice.body, confirmLabel: 'Continue', tone: 'accent', onConfirm: async () => setSettings({ ...settings, [key]: true }) });
                 return;
               }
               setSettings({ ...settings, [key]: false });
@@ -338,7 +339,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         </aside>}
       </div>
     </ModuleFrame>
-    {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={<button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">I understand</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
+    {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={<button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
     {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
 }
@@ -778,7 +779,7 @@ function WorkforceConfirmModal({ dialog, theme, onClose, onNotice }: { dialog: W
       setSubmitting(false);
     }
   };
-  return <WorkforceModal title={dialog.title} theme={theme} onClose={onClose} footer={<><button type="button" onClick={onClose} disabled={submitting} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void confirm()} disabled={submitting} className="h-10 rounded-lg bg-[#B91C1C] px-4 text-sm font-bold text-white">{submitting ? 'Working…' : dialog.confirmLabel}</button></>}><p className={cn('text-sm leading-6', muted(theme))}>{dialog.body}</p></WorkforceModal>;
+  return <WorkforceModal title={dialog.title} theme={theme} onClose={onClose} footer={<><button type="button" onClick={onClose} disabled={submitting} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void confirm()} disabled={submitting} className={cn('h-10 rounded-lg px-4 text-sm font-bold', dialog.tone === 'accent' ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : 'bg-[#B91C1C] text-white')}>{submitting ? 'Working…' : dialog.confirmLabel}</button></>}><p className={cn('text-sm leading-6', muted(theme))}>{dialog.body}</p></WorkforceModal>;
 }
 
 function daysBetweenInclusive(start: string, end: string) { return Math.max(0, Math.round((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1); }
@@ -858,11 +859,10 @@ function attendancePolicyChangeNotice(previousSignature: string | null, policy: 
   if (!previousSignature) {
     if (!policy.updated_by || policy.updated_by === currentUserId) return null;
     const activeRequirements = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => current[key]).map(settingLabel);
+    if (activeRequirements.length > 0) return attendanceEnabledNotice(activeRequirements);
     return {
       title: 'Attendance Policy Updated',
-      body: activeRequirements.length > 0
-        ? `Your organization has updated attendance requirements for your clock-in or clock-out records: ${activeRequirements.join(', ')}.`
-        : 'Your organization has updated your attendance policy. No extra clock-in verification requirements are currently enabled.',
+      body: 'Your organization has updated your attendance policy. No extra clock-in verification requirements are currently enabled.',
     };
   }
 
@@ -871,6 +871,7 @@ function attendancePolicyChangeNotice(previousSignature: string | null, policy: 
     const enabled = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => !previous[key] && current[key]).map(settingLabel);
     const disabled = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => previous[key] && !current[key]).map(settingLabel);
     if (enabled.length === 0 && disabled.length === 0) return null;
+    if (enabled.length > 0 && disabled.length === 0) return attendanceEnabledNotice(enabled);
     const parts = [];
     if (enabled.length > 0) parts.push(`Enabled: ${enabled.join(', ')}.`);
     if (disabled.length > 0) parts.push(`Disabled: ${disabled.join(', ')}.`);
@@ -881,6 +882,21 @@ function attendancePolicyChangeNotice(previousSignature: string | null, policy: 
 }
 
 function settingLabel(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) { return ({ capture_location: 'GPS location', capture_ip: 'IP address', capture_device: 'Device information', require_selfie: 'Photo verification', enforce_geofence: 'Geofence restriction' })[key]; }
+
+function attendanceEnabledNotice(enabled: string[]) {
+  const hasDevice = enabled.includes('IP address') || enabled.includes('Device information');
+  if (hasDevice && enabled.every((item) => item === 'IP address' || item === 'Device information')) {
+    return { title: 'Device Verification', body: 'Your organization has enabled device verification. Your IP address and device information may be recorded when you clock in or clock out.' };
+  }
+  const hasLocation = enabled.includes('GPS location') || enabled.includes('Geofence restriction');
+  if (hasLocation && enabled.every((item) => item === 'GPS location' || item === 'Geofence restriction')) {
+    return { title: 'Location Tracking', body: 'Your organization has enabled location tracking. Your GPS location may be recorded when you clock in or clock out.' };
+  }
+  if (enabled.length === 1 && enabled[0] === 'Photo verification') {
+    return { title: 'Photo Verification', body: 'Your organization has enabled photo verification. A photo may be recorded when you clock in so your organization can review attendance records.' };
+  }
+  return { title: 'Attendance Policy Updated', body: 'Your organization has updated attendance requirements for your clock-in or clock-out records: ' + enabled.join(', ') + '.' };
+}
 
 function attendanceSettingNotice(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) {
   if (key === 'capture_location' || key === 'enforce_geofence') return { title: 'Location Tracking', body: 'Your organization has enabled location tracking. Your GPS location may be recorded when you clock in or clock out.' };

@@ -237,9 +237,9 @@ const BUSINESS_MODULE_CONFIGS: BusinessModuleConfig[] = [
     key: 'payroll_preparation',
     title: 'Payroll Preparation',
     shortLabel: 'Payroll Prep',
-    description: 'Collect payroll inputs, employee-specific pay items, payment details, and draft payroll periods for review.',
+    description: 'Organize compensation inputs, employee-specific items, payment details, and draft preparation periods for owner review.',
     noticeTitle: 'Payroll Preparation Notice',
-    noticeBody: 'TriCord assists in organizing payroll information. TriCord does not calculate taxes, file payroll returns, submit government reports, or guarantee compliance with labor or tax regulations. Your organization is responsible for reviewing payroll calculations and complying with all applicable laws.',
+    noticeBody: 'TriCord assists in organizing compensation and payroll-preparation records. TriCord is not a payroll processor, tax advisor, legal advisor, or HR consulting service. TriCord does not process payroll, calculate taxes, file payroll returns, submit government reports, or guarantee compliance with labor, payroll, tax, privacy, or employment laws. Your organization remains responsible for reviewing all records and complying with applicable laws.',
   },
   {
     key: 'recruitment',
@@ -2848,7 +2848,7 @@ function GoogleDriveAttachmentModal({ theme, onClose, onAdd }: { theme: 'light' 
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="Optional, for example Payroll worksheet"
+              placeholder="Optional, for example Compensation worksheet"
               className={cn('h-11 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))}
             />
           </label>
@@ -3180,7 +3180,7 @@ function AdminView({
     { key: 'manage_knowledge', label: 'Knowledge' },
     ...(businessModules.employee_records ? [{ key: 'manage_hr' as const, label: 'Employee records' }, { key: 'approve_leave' as const, label: 'Leave approvals' }] : []),
     ...(businessModules.attendance_tracking ? [{ key: 'manage_timekeeping' as const, label: 'Attendance settings' }, { key: 'correct_attendance' as const, label: 'Attendance corrections' }] : []),
-    ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll preparation' }, { key: 'approve_payroll' as const, label: 'Approve payroll drafts' }] : []),
+    ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll preparation' }, { key: 'approve_payroll' as const, label: 'Approve preparation drafts' }] : []),
     ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Business reports' }] : []),
     { key: 'view_audit', label: 'Audit history' },
   ];
@@ -4171,11 +4171,11 @@ function SettingsModal({
             <HelpTopic title="Knowledge base" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting notes, and SOPs. Everyone except Guests can read knowledge articles; Owners and permitted Admins can manage them." theme={theme} />
             <HelpTopic title="Attendance Tracking" body="Optional Business Module. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
             <HelpTopic title="Employee Records" body="Optional Business Module. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
-            <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize payroll periods, payroll rules, employee-specific payroll items, and payment details for review. TriCord does not file taxes, submit payroll returns, or guarantee compliance." theme={theme} />
+            <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Business Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
             <HelpTopic title="Email features" body="Plus and Pro Hubs can forward email into Rooms and send outgoing email from a discussion using an email command. Use email only when your organization has permission and a lawful business reason to contact the recipient." theme={theme} />
-            <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting HR records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
+            <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage paid plans and billable seats through Stripe Checkout or the billing portal. Promo codes, taxes, renewal terms, and prorations are controlled at checkout or in Stripe." theme={theme} />
             <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Business Modules, Help, reporting a problem, and logout." theme={theme} />
@@ -4408,7 +4408,7 @@ function OnboardingScreen({
               <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
               <label className="col-span-2 text-xs font-semibold">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
               <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
-              <label className="text-xs font-semibold">Payroll frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+              <label className="text-xs font-semibold">Preparation frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
               <label className="col-span-2 text-xs font-semibold">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
             </div>
             <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
@@ -4466,7 +4466,7 @@ function HubSetupModal({ theme, email, onCreate, onClose }: { theme: 'light' | '
           <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
           <label className="text-xs font-semibold sm:col-span-2">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
           <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
-          <label className="text-xs font-semibold">Payroll frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+          <label className="text-xs font-semibold">Preparation frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
           <label className="text-xs font-semibold sm:col-span-2">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
         </div>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}

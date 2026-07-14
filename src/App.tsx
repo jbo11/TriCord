@@ -1786,7 +1786,7 @@ function Sidebar({
           </>}
         </nav>
 
-        <section className="mt-7 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <section className="mt-7 flex min-h-[22rem] flex-1 flex-col overflow-hidden">
           <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
             {canCreateSpaces && (
@@ -1807,7 +1807,7 @@ function Sidebar({
               const preference = roomPreferences[space.id];
               const pinned = Boolean(preference?.pinned);
               const menuOpen = roomMenuId === space.id;
-              const menuOpensUp = orderedSpaces.length - index <= 2;
+              const menuOpensUp = orderedSpaces.length > 3 && orderedSpaces.length - index <= 2;
               return (
                 <div
                   key={space.id}
@@ -4158,7 +4158,7 @@ function SettingsModal({
             <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Business Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
-            <HelpTopic title="Email features" body="Plus and Pro Hubs can forward email into Rooms and send outgoing email from a discussion using an email command. Use email only when your organization has permission and a lawful business reason to contact the recipient." theme={theme} />
+            <HelpTopic title="Email features" body="Plus and Pro Hubs can forward emails into a Room address so the message becomes a focused post, then send outbound email from a discussion using email commands such as @recipient@example.com or cc:. Use email only when your organization has permission and a lawful business reason to contact the recipient." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage paid plans and billable seats through Stripe Checkout or the billing portal. Promo codes, taxes, renewal terms, and prorations are controlled at checkout or in Stripe." theme={theme} />

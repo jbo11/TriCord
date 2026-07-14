@@ -5,6 +5,8 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type SortMode = 'active' | 'newest' | 'assigned' | 'archived';
 export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'timekeeping' | 'hr' | 'payroll' | 'reports' | 'admin';
+export type BusinessModuleKey = 'attendance_tracking' | 'employee_records' | 'payroll_preparation' | 'recruitment' | 'crm';
+export type BusinessModules = Record<BusinessModuleKey, boolean>;
 export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
 export type EmailProvider = 'gmail' | 'outlook' | 'microsoft365' | 'resend' | 'smtp';
 
@@ -29,6 +31,8 @@ export interface AppWorkspace {
   logo_url: string | null;
   brand_color: string | null;
   plan: 'free' | 'plus' | 'pro' | 'business' | 'enterprise';
+  business_modules?: Partial<BusinessModules> | null;
+  business_module_disclaimers?: Record<string, string> | null;
   created_at: string;
   role?: WorkspaceRole;
 }

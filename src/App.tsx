@@ -56,6 +56,7 @@ import {
   Trash2,
   User,
   UserPlus,
+  Users2,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -77,6 +78,8 @@ import {
   AppSpace,
   AppTask,
   AppWorkspace,
+  BusinessModuleKey,
+  BusinessModules,
   KnowledgeArticle,
   KnowledgeCategory,
   SpaceAccess,
@@ -159,8 +162,8 @@ const launchPlans: Array<{
   highlights: string[];
 }> = [
   { id: 'free', name: 'Free', monthly: '$0', annual: '$0', description: 'For new teams organizing work in one Hub.', highlights: ['1 owned Hub', '10 members included', '10 Rooms', '90 days message history', '1 GB storage'] },
-  { id: 'plus', name: 'Plus', monthly: '$9', annual: '$7', description: 'For small teams running collaboration and workforce tools.', highlights: ['5 owned Hubs', '100 members included', 'Unlimited Rooms', 'Unlimited history', '100 GB storage'] },
-  { id: 'pro', name: 'Pro', monthly: '$18', annual: '$15', description: 'For growing teams that need advanced controls.', highlights: ['Unlimited Hubs', 'Unlimited fair-use members', '1 TB storage', 'Advanced payroll and reports', '1 year audit history'] },
+  { id: 'plus', name: 'Plus', monthly: '$9', annual: '$7', description: 'For small teams that need more collaboration capacity and optional business modules.', highlights: ['5 owned Hubs', '100 members included', 'Unlimited Rooms', 'Unlimited history', '100 GB storage'] },
+  { id: 'pro', name: 'Pro', monthly: '$18', annual: '$15', description: 'For growing teams that need advanced controls and visibility.', highlights: ['Unlimited Hubs', 'Unlimited fair-use members', '1 TB storage', 'Advanced controls', '1 year audit history'] },
 ];
 
 interface ForwardableMessage {
@@ -194,6 +197,74 @@ interface ConfirmDialogState {
   confirmLabel?: string;
   onConfirm: () => Promise<void> | void;
 }
+interface BusinessModuleConfig {
+  key: BusinessModuleKey;
+  title: string;
+  shortLabel: string;
+  description: string;
+  noticeTitle: string;
+  noticeBody: string;
+}
+
+const BUSINESS_MODULE_NOTICE_VERSION = '2026-07-14';
+
+const DEFAULT_BUSINESS_MODULES: BusinessModules = {
+  attendance_tracking: false,
+  employee_records: false,
+  payroll_preparation: false,
+  recruitment: false,
+  crm: false,
+};
+
+const BUSINESS_MODULE_CONFIGS: BusinessModuleConfig[] = [
+  {
+    key: 'attendance_tracking',
+    title: 'Attendance Tracking',
+    shortLabel: 'Attendance',
+    description: 'Let Admins and Members clock in and out, while authorized leaders review records and optional verification details.',
+    noticeTitle: 'Attendance Tracking Notice',
+    noticeBody: 'This feature is provided as a recordkeeping tool only. TriCord does not certify attendance records for payroll, labor law compliance, or regulatory purposes. Your organization is responsible for ensuring compliance with all applicable employment laws in your jurisdiction.',
+  },
+  {
+    key: 'employee_records',
+    title: 'Employee Records',
+    shortLabel: 'Employee Records',
+    description: 'Organize employee profiles, leave requests, documents, performance notes, and role-protected records.',
+    noticeTitle: 'Employee Records Notice',
+    noticeBody: 'TriCord stores employee information as provided by your organization. Your organization is responsible for complying with all applicable privacy, employment, and recordkeeping laws.',
+  },
+  {
+    key: 'payroll_preparation',
+    title: 'Payroll Preparation',
+    shortLabel: 'Payroll Prep',
+    description: 'Collect payroll inputs, employee-specific pay items, payment details, and draft payroll periods for review.',
+    noticeTitle: 'Payroll Preparation Notice',
+    noticeBody: 'TriCord assists in organizing payroll information. TriCord does not calculate taxes, file payroll returns, submit government reports, or guarantee compliance with labor or tax regulations. Your organization is responsible for reviewing payroll calculations and complying with all applicable laws.',
+  },
+  {
+    key: 'recruitment',
+    title: 'Recruitment',
+    shortLabel: 'Recruitment',
+    description: 'Placeholder for applicant tracking and hiring workflows planned for a future release.',
+    noticeTitle: 'Recruitment Notice',
+    noticeBody: 'Recruitment tools are intended for organizing hiring activity only. Your organization is responsible for fair hiring practices, candidate notices, consent, and compliance with applicable employment and privacy laws.',
+  },
+  {
+    key: 'crm',
+    title: 'CRM',
+    shortLabel: 'CRM',
+    description: 'Placeholder for lightweight customer, deal, and follow-up tracking planned for a future release.',
+    noticeTitle: 'CRM Notice',
+    noticeBody: 'CRM tools are intended for organizing customer relationships and follow-ups. Your organization is responsible for lawful communications, consent, privacy notices, and respecting opt-out requests.',
+  },
+];
+
+
+interface BusinessModuleDisclosureState {
+  module: BusinessModuleConfig;
+  nextModules: BusinessModules;
+}
+
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
@@ -235,6 +306,7 @@ export default function App() {
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [billingError, setBillingError] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [businessModuleDisclosure, setBusinessModuleDisclosure] = useState<BusinessModuleDisclosureState | null>(null);
   const billingSeatSyncKeyRef = useRef('');
   const [editingPost, setEditingPost] = useState<AppPost | null>(null);
   const [editingTask, setEditingTask] = useState<AppTask | null>(null);
@@ -259,10 +331,11 @@ export default function App() {
   const canManageMembers = hasCapability('manage_members');
   const canManageRooms = hasCapability('manage_rooms');
   const canManageKnowledge = hasCapability('manage_knowledge');
-  const canViewTimekeeping = canOpenView('timekeeping', currentRole, capabilities);
-  const canViewHr = canOpenView('hr', currentRole, capabilities);
-  const canViewPayroll = canOpenView('payroll', currentRole, capabilities);
-  const canViewReports = hasCapability('view_reports');
+  const businessModules = useMemo(() => getBusinessModules(selectedWorkspace), [selectedWorkspace]);
+  const canViewTimekeeping = businessModules.attendance_tracking && canOpenView('timekeeping', currentRole, capabilities);
+  const canViewHr = businessModules.employee_records && canOpenView('hr', currentRole, capabilities);
+  const canViewPayroll = businessModules.payroll_preparation && canOpenView('payroll', currentRole, capabilities);
+  const canViewReports = (businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) && hasCapability('view_reports');
   const canManageAdmin = currentRole === 'owner' || canManageMembers || canManageRooms || canManageKnowledge || hasCapability('view_audit');
   const canModerateContent = currentRole === 'owner' || currentRole === 'admin';
   const showThreadPanel = chatOpen;
@@ -596,7 +669,7 @@ export default function App() {
 
     const workspaceResult = await supabase
       .from('workspaces')
-      .select('id, name, slug, owner_id, logo_url, brand_color, plan, created_at')
+      .select('*')
       .in('id', workspaceIds);
 
     if (workspaceResult.error) {
@@ -853,8 +926,15 @@ export default function App() {
   useEffect(() => {
     if (!canOpenView(view, currentRole, capabilities)) {
       setView('feed');
+      return;
     }
-  }, [capabilities, currentRole, view]);
+    if ((view === 'timekeeping' && !businessModules.attendance_tracking)
+      || (view === 'hr' && !businessModules.employee_records)
+      || (view === 'payroll' && !businessModules.payroll_preparation)
+      || (view === 'reports' && !(businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation))) {
+      setView('feed');
+    }
+  }, [businessModules, capabilities, currentRole, view]);
 
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
@@ -988,6 +1068,7 @@ export default function App() {
           canViewPayroll={canViewPayroll}
           canViewReports={canViewReports}
           premiumFeatures={premiumFeatures}
+          businessModules={businessModules}
         />
 
         <main className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -1185,6 +1266,7 @@ export default function App() {
                   memberships={memberships}
                   profiles={profiles}
                   spaces={spaces}
+                  businessModules={businessModules}
                   onInvite={(email, role) => createWorkspaceInvitation(workspaceId, email, role)}
                   onRoleChange={async (membershipId, role) => {
                     await updateMemberRole(membershipId, role);
@@ -1440,6 +1522,17 @@ export default function App() {
           role={currentRole}
           ownerEmail={ownerEmail}
           premiumEmail={premiumFeatures}
+          businessModules={businessModules}
+          onBusinessModulesChange={async (nextModules) => {
+            if (!selectedWorkspace || currentRole !== 'owner') return;
+            const changedEntry = BUSINESS_MODULE_CONFIGS.find((module) => !getBusinessModules(selectedWorkspace)[module.key] && nextModules[module.key]);
+            if (changedEntry && !hasAcknowledgedBusinessModule(selectedWorkspace, changedEntry.key)) {
+              setBusinessModuleDisclosure({ module: changedEntry, nextModules });
+              return;
+            }
+            await updateWorkspaceBusinessModules(selectedWorkspace.id, nextModules, selectedWorkspace.business_module_disclaimers ?? {});
+            setWorkspaces((current) => current.map((workspace) => workspace.id === selectedWorkspace.id ? { ...workspace, business_modules: nextModules } : workspace));
+          }}
           onUpgrade={() => { setAccountModal(null); setBillingModalOpen(true); }}
           onClose={() => setAccountModal(null)}
           onOpenSection={setAccountModal}
@@ -1459,6 +1552,29 @@ export default function App() {
             return uploadAvatar(session.user.id, file);
           }}
         />
+      )}
+
+      {businessModuleDisclosure && selectedWorkspace && (
+        <ModalShell theme={theme} title={businessModuleDisclosure.module.noticeTitle} onClose={() => setBusinessModuleDisclosure(null)}>
+          <div className="grid gap-5">
+            <p className={cn('text-sm leading-7', muted(theme))}>{businessModuleDisclosure.module.noticeBody}</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setBusinessModuleDisclosure(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Cancel</button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextDisclaimers = { ...(selectedWorkspace.business_module_disclaimers ?? {}), [businessModuleDisclosure.module.key]: BUSINESS_MODULE_NOTICE_VERSION };
+                  await updateWorkspaceBusinessModules(selectedWorkspace.id, businessModuleDisclosure.nextModules, nextDisclaimers);
+                  setWorkspaces((current) => current.map((workspace) => workspace.id === selectedWorkspace.id ? { ...workspace, business_modules: businessModuleDisclosure.nextModules, business_module_disclaimers: nextDisclaimers } : workspace));
+                  setBusinessModuleDisclosure(null);
+                }}
+                className="h-10 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white"
+              >
+                I Understand
+              </button>
+            </div>
+          </div>
+        </ModalShell>
       )}
 
       {hubModalOpen && (
@@ -1527,6 +1643,7 @@ function Sidebar({
   canViewPayroll,
   canViewReports,
   premiumFeatures,
+  businessModules,
 }: {
   activeSpaceId: string;
   onSpaceChange: (spaceId: string) => void;
@@ -1560,10 +1677,11 @@ function Sidebar({
   canViewPayroll: boolean;
   canViewReports: boolean;
   premiumFeatures: boolean;
+  businessModules: BusinessModules;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || canManageRooms;
-  const showWorkforceNav = currentRole !== 'guest' && (canViewTimekeeping || canViewHr || canViewPayroll || canViewReports || canManageAdmin);
+  const showBusinessNav = currentRole !== 'guest' && (canViewTimekeeping || canViewHr || canViewPayroll || canViewReports || canManageAdmin || businessModules.recruitment || businessModules.crm);
   const canCreateSpaces = canManageSpaces || currentRole === 'member';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -1675,12 +1793,14 @@ function Sidebar({
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
           {currentRole !== 'guest' && <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />}
-          {showWorkforceNav && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Workforce</span><button type="button" aria-label={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} title={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
-          {showWorkforceNav && workforceNavOpen && <>
-            {canViewTimekeeping && <NavButton icon={Clock3} label="Timekeeping" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
-            {canViewHr && <NavButton icon={BriefcaseBusiness} label="HR" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
-            {canViewPayroll && <NavButton icon={Banknote} label="Payroll" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
-            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
+          {showBusinessNav && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Business</span><button type="button" aria-label={workforceNavOpen ? 'Collapse business navigation' : 'Expand business navigation'} title={workforceNavOpen ? 'Collapse business navigation' : 'Expand business navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
+          {showBusinessNav && workforceNavOpen && <>
+            {canViewTimekeeping && <NavButton icon={Clock3} label="Attendance" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
+            {canViewHr && <NavButton icon={BriefcaseBusiness} label="Employee Records" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
+            {canViewPayroll && <NavButton icon={Banknote} label="Payroll Prep" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
+            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Business Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
+            {businessModules.recruitment && <NavButton icon={Inbox} label="Recruitment" active={false} onClick={() => onOpenAccount('settings')} theme={theme} />}
+            {businessModules.crm && <NavButton icon={Users2} label="CRM" active={false} onClick={() => onOpenAccount('settings')} theme={theme} />}
             {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
           </>}
         </nav>
@@ -3033,6 +3153,7 @@ function AdminView({
   memberships,
   profiles,
   spaces,
+  businessModules,
   onInvite,
   onRoleChange,
 }: {
@@ -3043,6 +3164,7 @@ function AdminView({
   memberships: AppMembership[];
   profiles: Record<string, AppProfile>;
   spaces: AppSpace[];
+  businessModules: BusinessModules;
   onInvite: (email: string, role: WorkspaceRole) => Promise<string>;
   onRoleChange: (membershipId: string, role: WorkspaceRole) => Promise<void>;
 }) {
@@ -3056,13 +3178,10 @@ function AdminView({
     { key: 'manage_members', label: 'People and roles' },
     { key: 'manage_rooms', label: 'Rooms' },
     { key: 'manage_knowledge', label: 'Knowledge' },
-    { key: 'manage_hr', label: 'HR records' },
-    { key: 'approve_leave', label: 'Leave approvals' },
-    { key: 'manage_timekeeping', label: 'Timekeeping settings' },
-    { key: 'correct_attendance', label: 'Attendance corrections' },
-    { key: 'manage_payroll', label: 'Prepare payroll' },
-    { key: 'approve_payroll', label: 'Approve payroll' },
-    { key: 'view_reports', label: 'Workforce reports' },
+    ...(businessModules.employee_records ? [{ key: 'manage_hr' as const, label: 'Employee records' }, { key: 'approve_leave' as const, label: 'Leave approvals' }] : []),
+    ...(businessModules.attendance_tracking ? [{ key: 'manage_timekeeping' as const, label: 'Attendance settings' }, { key: 'correct_attendance' as const, label: 'Attendance corrections' }] : []),
+    ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll preparation' }, { key: 'approve_payroll' as const, label: 'Approve payroll drafts' }] : []),
+    ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Business reports' }] : []),
     { key: 'view_audit', label: 'Audit history' },
   ];
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
@@ -3699,6 +3818,8 @@ function SettingsModal({
   role,
   ownerEmail,
   premiumEmail,
+  businessModules,
+  onBusinessModulesChange,
   onUpgrade,
   onClose,
   onOpenSection,
@@ -3718,6 +3839,8 @@ function SettingsModal({
   role?: WorkspaceRole;
   ownerEmail: string;
   premiumEmail: boolean;
+  businessModules: BusinessModules;
+  onBusinessModulesChange: (modules: BusinessModules) => Promise<void>;
   onUpgrade: () => void;
   onClose: () => void;
   onOpenSection: (section: AccountModalView) => void;
@@ -3741,6 +3864,8 @@ function SettingsModal({
   const [emailAccounts, setEmailAccounts] = useState<UserEmailAccount[]>([]);
   const [emailAccountNotice, setEmailAccountNotice] = useState('');
   const [emailAccountsLoading, setEmailAccountsLoading] = useState(false);
+  const [moduleSavingKey, setModuleSavingKey] = useState<BusinessModuleKey | ''>('');
+  const [moduleError, setModuleError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const modalTitles: Record<AccountModalView, string> = {
     personalization: 'Personalization',
@@ -3993,6 +4118,45 @@ function SettingsModal({
               <p className="mt-2 font-bold">{workspace?.name ?? 'Hub'}</p>
               <p className={cn('mt-1 text-sm', muted(theme))}>{role ? getRoleLabel(role) : 'Member'} role</p>
             </section>
+            {role === 'owner' && (
+              <section className={cn('rounded-lg border p-4', surface(theme))}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Business Modules</p>
+                    <p className={cn('mt-2 text-sm leading-6', muted(theme))}>Optional recordkeeping modules stay off until an Owner enables them for this Hub.</p>
+                  </div>
+                  <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {BUSINESS_MODULE_CONFIGS.map((module) => (
+                    <label key={module.key} className={cn('flex items-start justify-between gap-4 rounded-lg border p-3', subtleButton(theme))}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-bold">{module.title}</span>
+                        <span className={cn('mt-1 block text-xs leading-5', muted(theme))}>{module.description}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {moduleSavingKey === module.key && <Loader2 className="h-4 w-4 animate-spin" />}
+                        <input
+                          type="checkbox"
+                          checked={businessModules[module.key]}
+                          disabled={Boolean(moduleSavingKey)}
+                          onChange={async (event) => {
+                            const nextModules = { ...businessModules, [module.key]: event.target.checked };
+                            setModuleSavingKey(module.key);
+                            setModuleError('');
+                            try { await onBusinessModulesChange(nextModules); }
+                            catch (caughtError) { setModuleError(getErrorMessage(caughtError)); }
+                            finally { setModuleSavingKey(''); }
+                          }}
+                          className="h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {moduleError && <p className="mt-3 text-sm font-semibold text-[#B91C1C]">{moduleError}</p>}
+              </section>
+            )}
           </div>
         )}
 
@@ -4005,16 +4169,16 @@ function SettingsModal({
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />
             <HelpTopic title="Tasks" body="Plan work with Board, List, and Calendar views. Add assignees, priorities, due dates, project names, statuses, and archive completed or canceled work." theme={theme} />
             <HelpTopic title="Knowledge base" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting notes, and SOPs. Everyone except Guests can read knowledge articles; Owners and permitted Admins can manage them." theme={theme} />
-            <HelpTopic title="Timekeeping" body="Admins and Members can clock in and out. Owners can correct records. Plus and Pro Hubs can configure per-employee clock-in requirements such as GPS, IP, device information, selfie verification, workdays, and grace periods." theme={theme} />
-            <HelpTopic title="HR" body="Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
-            <HelpTopic title="Payroll" body="Prepare payroll periods, payroll rules, employee-specific payroll items, and payment details. Payroll tools are controlled by Owner/Admin permissions and should be reviewed against local payroll requirements." theme={theme} />
-            <HelpTopic title="Reports" body="Review attendance, leave, payroll totals, holidays, late arrivals, absences, departments, and date ranges from one operational dashboard." theme={theme} />
+            <HelpTopic title="Attendance Tracking" body="Optional Business Module. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
+            <HelpTopic title="Employee Records" body="Optional Business Module. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
+            <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize payroll periods, payroll rules, employee-specific payroll items, and payment details for review. TriCord does not file taxes, submit payroll returns, or guarantee compliance." theme={theme} />
+            <HelpTopic title="Business Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
             <HelpTopic title="Email features" body="Plus and Pro Hubs can forward email into Rooms and send outgoing email from a discussion using an email command. Use email only when your organization has permission and a lawful business reason to contact the recipient." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting HR records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage paid plans and billable seats through Stripe Checkout or the billing portal. Promo codes, taxes, renewal terms, and prorations are controlled at checkout or in Stripe." theme={theme} />
-            <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Help, reporting a problem, and logout." theme={theme} />
+            <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Business Modules, Help, reporting a problem, and logout." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl plus Backslash on Windows or Linux, or Command plus Backslash on macOS, to hide or show the discussion panel." theme={theme} />
             <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white lg:col-span-3"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
@@ -5504,6 +5668,27 @@ function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === 'object' && error && 'message' in error) return String(error.message);
   return 'Something went wrong. Please try again.';
+}
+
+function getBusinessModules(workspace?: AppWorkspace): BusinessModules {
+  return { ...DEFAULT_BUSINESS_MODULES, ...(workspace?.business_modules ?? {}) };
+}
+
+function hasAcknowledgedBusinessModule(workspace: AppWorkspace, key: BusinessModuleKey) {
+  return workspace.business_module_disclaimers?.[key] === BUSINESS_MODULE_NOTICE_VERSION;
+}
+
+async function updateWorkspaceBusinessModules(workspaceId: string, modules: BusinessModules, disclaimers: Record<string, string>) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase
+    .from('workspaces')
+    .update({
+      business_modules: modules,
+      business_module_disclaimers: disclaimers,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', workspaceId);
+  if (error) throw error;
 }
 
 function normalizePlan(plan: string): LaunchPlan {

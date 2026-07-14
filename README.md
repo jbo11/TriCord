@@ -1,6 +1,6 @@
 # TriCord
 
-TriCord is a production-oriented collaborative hub organized around posts instead of channels. The root route is now a conversion-focused marketing website, while the application runs under `/app`. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
+TriCord is a collaboration-first work hub organized around focused posts, Rooms, tasks, knowledge, files, and optional Business Modules. The root route is a conversion-focused marketing website, while the application runs under `/app`. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
 
 ## Current Scope
 
@@ -42,14 +42,14 @@ Required migrations:
 - `supabase/migrations/20260624204500_reload_workspace_onboarding_rpc.sql`
 - `supabase/migrations/20260624210000_workspace_invitations.sql`
 
-## Employee Sign-In
+## Member Sign-In
 
-Employees and guests do not create the company hub themselves.
+Members and guests do not create the company hub themselves.
 
 1. Owner or admin opens `Admin`.
 2. Enter the employee email and role.
 3. Copy the generated invite link.
-4. Employee opens the link and signs in with the invited email.
+4. The invited user opens the link and signs in with the invited email.
 5. After magic-link authentication, TriCord accepts the invite and adds the user to the hub.
 
 If the invite opens while the browser is already signed in as another user, TriCord keeps the invite token and offers `Sign in with invited email`. Use that option, then request the magic link for the exact email that received the invite.

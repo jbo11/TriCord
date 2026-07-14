@@ -129,14 +129,14 @@ function Hero({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEve
           </div>
         </div>
         <div className="relative mx-auto w-full max-w-2xl lg:max-w-none">
-          <div className="absolute -left-6 top-12 z-20 hidden rounded-2xl border border-white/14 bg-white/12 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl sm:block">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFEDD5] text-[#C2410C]"><Bell className="h-5 w-5" /></span><div><p className="text-sm font-black">3 active discussions</p><p className="text-xs text-white/62">Client launch room</p></div></div>
+          <div className="absolute -left-6 top-12 z-20 hidden rounded-2xl border border-white/14 bg-[#17151D]/92 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl sm:block">
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FFEDD5] text-[#C2410C]"><Bell className="h-5 w-5" /></span><div><p className="text-sm font-black">3 active discussions</p><p className="text-xs text-[#D8D2DE]">Client launch room</p></div></div>
           </div>
-          <div className="absolute -right-4 top-28 z-20 hidden rounded-2xl border border-white/14 bg-white/12 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl md:block">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#FDBA74]">Assigned</p><p className="mt-1 text-sm font-black">Taylor owns final review</p><p className="mt-1 text-xs text-white/62">Due Friday</p>
+          <div className="absolute -right-4 top-28 z-20 hidden rounded-2xl border border-white/14 bg-[#17151D]/92 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl md:block">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#FDBA74]">Assigned</p><p className="mt-1 text-sm font-black">Taylor owns final review</p><p className="mt-1 text-xs text-[#D8D2DE]">Due Friday</p>
           </div>
-          <div className="absolute -bottom-7 left-12 z-20 hidden rounded-2xl border border-white/14 bg-white/12 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl md:block">
-            <div className="flex -space-x-2">{['A','J','S','M'].map((initial) => <span key={initial} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-[#F97316] text-xs font-black text-[#431407]">{initial}</span>)}</div><p className="mt-3 text-xs text-white/64">Team members online</p>
+          <div className="absolute -bottom-7 left-12 z-20 hidden rounded-2xl border border-white/14 bg-[#17151D]/92 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl md:block">
+            <div className="flex -space-x-2">{['A','J','S','M'].map((initial) => <span key={initial} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-[#F97316] text-xs font-black text-[#431407]">{initial}</span>)}</div><p className="mt-3 text-xs text-[#D8D2DE]">Team members online</p>
           </div>
           <HeroAppMockup />
         </div>

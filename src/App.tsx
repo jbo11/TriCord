@@ -56,7 +56,6 @@ import {
   Trash2,
   User,
   UserPlus,
-  Users2,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -212,8 +211,6 @@ const DEFAULT_BUSINESS_MODULES: BusinessModules = {
   attendance_tracking: false,
   employee_records: false,
   payroll_preparation: false,
-  recruitment: false,
-  crm: false,
 };
 
 const BUSINESS_MODULE_CONFIGS: BusinessModuleConfig[] = [
@@ -240,22 +237,6 @@ const BUSINESS_MODULE_CONFIGS: BusinessModuleConfig[] = [
     description: 'Organize compensation inputs, employee-specific items, payment details, and draft preparation periods for owner review.',
     noticeTitle: 'Payroll Preparation Notice',
     noticeBody: 'TriCord assists in organizing compensation and payroll-preparation records. TriCord is not a payroll processor, tax advisor, legal advisor, or HR consulting service. TriCord does not process payroll, calculate taxes, file payroll returns, submit government reports, or guarantee compliance with labor, payroll, tax, privacy, or employment laws. Your organization remains responsible for reviewing all records and complying with applicable laws.',
-  },
-  {
-    key: 'recruitment',
-    title: 'Recruitment',
-    shortLabel: 'Recruitment',
-    description: 'Placeholder for applicant tracking and hiring workflows planned for a future release.',
-    noticeTitle: 'Recruitment Notice',
-    noticeBody: 'Recruitment tools are intended for organizing hiring activity only. Your organization is responsible for fair hiring practices, candidate notices, consent, and compliance with applicable employment and privacy laws.',
-  },
-  {
-    key: 'crm',
-    title: 'CRM',
-    shortLabel: 'CRM',
-    description: 'Placeholder for lightweight customer, deal, and follow-up tracking planned for a future release.',
-    noticeTitle: 'CRM Notice',
-    noticeBody: 'CRM tools are intended for organizing customer relationships and follow-ups. Your organization is responsible for lawful communications, consent, privacy notices, and respecting opt-out requests.',
   },
 ];
 
@@ -331,7 +312,10 @@ export default function App() {
   const canManageMembers = hasCapability('manage_members');
   const canManageRooms = hasCapability('manage_rooms');
   const canManageKnowledge = hasCapability('manage_knowledge');
-  const businessModules = useMemo(() => getBusinessModules(selectedWorkspace), [selectedWorkspace]);
+  const savedBusinessModules = useMemo(() => getBusinessModules(selectedWorkspace), [selectedWorkspace]);
+  const currentPlan = normalizePlan(selectedWorkspace?.plan ?? 'free');
+  const premiumFeatures = currentPlan === 'plus' || currentPlan === 'pro';
+  const businessModules = premiumFeatures ? savedBusinessModules : DEFAULT_BUSINESS_MODULES;
   const canViewTimekeeping = businessModules.attendance_tracking && canOpenView('timekeeping', currentRole, capabilities);
   const canViewHr = businessModules.employee_records && canOpenView('hr', currentRole, capabilities);
   const canViewPayroll = businessModules.payroll_preparation && canOpenView('payroll', currentRole, capabilities);
@@ -339,8 +323,6 @@ export default function App() {
   const canManageAdmin = currentRole === 'owner' || canManageMembers || canManageRooms || canManageKnowledge || hasCapability('view_audit');
   const canModerateContent = currentRole === 'owner' || currentRole === 'admin';
   const showThreadPanel = chatOpen;
-  const currentPlan = normalizePlan(selectedWorkspace?.plan ?? 'free');
-  const premiumFeatures = currentPlan === 'plus' || currentPlan === 'pro';
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
   const selectedPostRoom = selectedPost ? spaces.find((space) => space.id === selectedPost.space_id) : undefined;
@@ -1522,9 +1504,10 @@ export default function App() {
           role={currentRole}
           ownerEmail={ownerEmail}
           premiumEmail={premiumFeatures}
-          businessModules={businessModules}
+          businessModules={savedBusinessModules}
           onBusinessModulesChange={async (nextModules) => {
             if (!selectedWorkspace || currentRole !== 'owner') return;
+            if (!premiumFeatures) throw new Error('Business modules are available on Plus and Pro plans.');
             const changedEntry = BUSINESS_MODULE_CONFIGS.find((module) => !getBusinessModules(selectedWorkspace)[module.key] && nextModules[module.key]);
             if (changedEntry && !hasAcknowledgedBusinessModule(selectedWorkspace, changedEntry.key)) {
               setBusinessModuleDisclosure({ module: changedEntry, nextModules });
@@ -1681,7 +1664,7 @@ function Sidebar({
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || canManageRooms;
-  const showBusinessNav = currentRole !== 'guest' && (canViewTimekeeping || canViewHr || canViewPayroll || canViewReports || canManageAdmin || businessModules.recruitment || businessModules.crm);
+  const showBusinessNav = currentRole !== 'guest' && (canViewTimekeeping || canViewHr || canViewPayroll || canViewReports || canManageAdmin);
   const canCreateSpaces = canManageSpaces || currentRole === 'member';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -1799,8 +1782,6 @@ function Sidebar({
             {canViewHr && <NavButton icon={BriefcaseBusiness} label="Employee Records" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
             {canViewPayroll && <NavButton icon={Banknote} label="Payroll Prep" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
             {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Business Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
-            {businessModules.recruitment && <NavButton icon={Inbox} label="Recruitment" active={false} onClick={() => onOpenAccount('settings')} theme={theme} />}
-            {businessModules.crm && <NavButton icon={Users2} label="CRM" active={false} onClick={() => onOpenAccount('settings')} theme={theme} />}
             {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
           </>}
         </nav>
@@ -4121,7 +4102,7 @@ function SettingsModal({
               <p className="mt-2 font-bold">{workspace?.name ?? 'Hub'}</p>
               <p className={cn('mt-1 text-sm', muted(theme))}>{role ? getRoleLabel(role) : 'Member'} role</p>
             </section>
-            {role === 'owner' && (
+            {role === 'owner' && premiumEmail && (
               <section className={cn('rounded-lg border p-4', surface(theme))}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>

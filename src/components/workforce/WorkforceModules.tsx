@@ -884,24 +884,29 @@ function attendancePolicyChangeNotice(previousSignature: string | null, policy: 
 function settingLabel(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) { return ({ capture_location: 'GPS location', capture_ip: 'IP address', capture_device: 'Device information', require_selfie: 'Photo verification', enforce_geofence: 'Geofence restriction' })[key]; }
 
 function attendanceEnabledNotice(enabled: string[]) {
-  const hasDevice = enabled.includes('IP address') || enabled.includes('Device information');
-  if (hasDevice && enabled.every((item) => item === 'IP address' || item === 'Device information')) {
-    return { title: 'Device Verification', body: 'Your organization has enabled device verification. Your IP address and device information may be recorded when you clock in or clock out.' };
-  }
-  const hasLocation = enabled.includes('GPS location') || enabled.includes('Geofence restriction');
-  if (hasLocation && enabled.every((item) => item === 'GPS location' || item === 'Geofence restriction')) {
-    return { title: 'Location Tracking', body: 'Your organization has enabled location tracking. Your GPS location may be recorded when you clock in or clock out.' };
-  }
-  if (enabled.length === 1 && enabled[0] === 'Photo verification') {
-    return { title: 'Photo Verification', body: 'Your organization has enabled photo verification. A photo may be recorded when you clock in so your organization can review attendance records.' };
-  }
-  return { title: 'Attendance Policy Updated', body: 'Your organization has updated attendance requirements for your clock-in or clock-out records: ' + enabled.join(', ') + '.' };
+  const notices = enabled.map((label) => employeeAttendanceRequirementNotice(label));
+  if (notices.length === 1) return notices[0];
+  return {
+    title: 'Attendance Requirements Updated',
+    body: notices.map((notice) => notice.body).join(' '),
+  };
+}
+
+function employeeAttendanceRequirementNotice(label: string) {
+  if (label === 'GPS location') return { title: 'GPS Location Enabled', body: 'Your organization has enabled GPS location capture. Your location may be recorded when you clock in or clock out.' };
+  if (label === 'IP address') return { title: 'IP Address Recording Enabled', body: 'Your organization has enabled IP address recording. Your IP address may be recorded when you clock in or clock out.' };
+  if (label === 'Device information') return { title: 'Device Information Enabled', body: 'Your organization has enabled device information capture. Information about the device used to clock in or clock out may be recorded.' };
+  if (label === 'Photo verification') return { title: 'Photo Verification Enabled', body: 'Your organization has enabled photo verification. A photo may be recorded when you clock in so your organization can review attendance records.' };
+  if (label === 'Geofence restriction') return { title: 'Geofence Restriction Enabled', body: 'Your organization has enabled geofence restrictions. You may need to be within the approved work location before clocking in or clocking out.' };
+  return { title: 'Attendance Requirement Enabled', body: 'Your organization has enabled ' + label.toLowerCase() + ' for attendance records.' };
 }
 
 function attendanceSettingNotice(key: keyof Pick<TimekeepingSettings, 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence'>) {
-  if (key === 'capture_location' || key === 'enforce_geofence') return { title: 'Location Tracking', body: 'Your organization has enabled location tracking. Your GPS location may be recorded when you clock in or clock out.' };
-  if (key === 'require_selfie') return { title: 'Photo Verification', body: 'Your organization has enabled photo verification. A photo may be recorded when you clock in so your organization can review attendance records.' };
-  return { title: 'Device Verification', body: 'Your organization has enabled device verification. Your IP address and device information may be recorded when you clock in or clock out.' };
+  if (key === 'capture_location') return { title: 'Enable GPS location?', body: 'You are about to enable GPS location capture for this employee. After you continue and save the policy, the employee will be notified that their location may be recorded when they clock in or clock out.' };
+  if (key === 'capture_ip') return { title: 'Enable IP address recording?', body: 'You are about to enable IP address recording for this employee. After you continue and save the policy, the employee will be notified that their IP address may be recorded when they clock in or clock out.' };
+  if (key === 'capture_device') return { title: 'Enable device information?', body: 'You are about to enable device information capture for this employee. After you continue and save the policy, the employee will be notified that device details may be recorded when they clock in or clock out.' };
+  if (key === 'require_selfie') return { title: 'Enable photo verification?', body: 'You are about to enable photo verification for this employee. After you continue and save the policy, the employee will be notified that a photo may be recorded when they clock in.' };
+  return { title: 'Enable geofence restriction?', body: 'You are about to enable a geofence restriction for this employee. After you continue and save the policy, the employee will be notified that they may need to be within the approved work location before clocking in or clocking out.' };
 }
 function numberOrNull(value: string) { return value.trim() === '' ? null : Number(value); }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String(error.message) : 'Something went wrong.'; }

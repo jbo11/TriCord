@@ -58,6 +58,8 @@ interface TimekeepingSettings {
 interface EmployeeTimekeepingPolicy extends TimekeepingSettings {
   employee_profile_id: string;
   enabled: boolean;
+  updated_at?: string;
+  updated_by?: string | null;
 }
 
 interface EmployeePayrollField {
@@ -146,7 +148,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       const signature = attendancePolicySignature(ownPolicy);
       const storageKey = attendancePolicyStorageKey(workspaceId, ownEmployee.id);
       const previousSignature = window.localStorage.getItem(storageKey);
-      const notice = attendancePolicyChangeNotice(previousSignature, ownPolicy);
+      const notice = attendancePolicyChangeNotice(previousSignature, ownPolicy, userId);
       if (notice && policySignatureRef.current !== signature) setPolicyNotice(notice);
       window.localStorage.setItem(storageKey, signature);
       policySignatureRef.current = signature;
@@ -851,14 +853,16 @@ function attendancePolicySignature(policy: EmployeeTimekeepingPolicy) {
   return JSON.stringify(attendancePolicySnapshot(policy));
 }
 
-function attendancePolicyChangeNotice(previousSignature: string | null, policy: EmployeeTimekeepingPolicy) {
+function attendancePolicyChangeNotice(previousSignature: string | null, policy: EmployeeTimekeepingPolicy, currentUserId: string) {
   const current = attendancePolicySnapshot(policy);
   if (!previousSignature) {
+    if (!policy.updated_by || policy.updated_by === currentUserId) return null;
     const activeRequirements = ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => current[key]).map(settingLabel);
-    if (activeRequirements.length === 0) return null;
     return {
-      title: 'Attendance Policy Notice',
-      body: `Your organization has enabled attendance requirements for your clock-in or clock-out records: ${activeRequirements.join(', ')}.`,
+      title: 'Attendance Policy Updated',
+      body: activeRequirements.length > 0
+        ? `Your organization has updated attendance requirements for your clock-in or clock-out records: ${activeRequirements.join(', ')}.`
+        : 'Your organization has updated your attendance policy. No extra clock-in verification requirements are currently enabled.',
     };
   }
 

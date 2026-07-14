@@ -135,7 +135,6 @@ const GOOGLE_DRIVE_PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.metadat
 const INBOUND_EMAIL_DOMAIN = ((import.meta.env.VITE_INBOUND_EMAIL_DOMAIN as string | undefined)?.trim() || 'room.tricord.cc').replace(/^@/, '').replace(/\/$/, '').toLowerCase();
 const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL || '/';
 const USER_GUIDE_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.pdf`;
-const USER_GUIDE_DOCX_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.docx`;
 const googleScriptPromises = new Map<string, Promise<void>>();
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
@@ -188,7 +187,7 @@ interface RoomPreference {
   pinned: boolean;
 }
 
-type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about' | 'report';
+type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'help' | 'about' | 'report';
 interface HubSetup { name: string; countryCode: string; currencyCode: string; locale: string; timezone: string; dateFormat: string; payrollFrequency: string; firstDayOfWeek: number }
 
 interface ConfirmDialogState {
@@ -1679,7 +1678,9 @@ function Sidebar({
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
-  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const planKey = plan.toLowerCase();
+  const planLabel = planKey.charAt(0).toUpperCase() + planKey.slice(1);
+  const ownerCanUpgrade = currentRole === 'owner' && ['free', 'plus'].includes(planKey);
   const orderedSpaces = useMemo(() => [...spaces].sort((a, b) => {
     const aPreference = roomPreferences[a.id];
     const bPreference = roomPreferences[b.id];
@@ -1782,12 +1783,12 @@ function Sidebar({
             {canViewTimekeeping && <NavButton icon={Clock3} label="Attendance" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
             {canViewHr && <NavButton icon={BriefcaseBusiness} label="Employee Records" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
             {canViewPayroll && <NavButton icon={Banknote} label="Payroll Prep" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
-            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Business Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
+            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Attendance Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
             {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
           </>}
         </nav>
 
-        <section className="mt-7 flex min-h-[22rem] flex-1 flex-col overflow-hidden">
+        <section className="mt-7 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
             {canCreateSpaces && (
@@ -1796,7 +1797,7 @@ function Sidebar({
               </button>
             )}
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-28 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-4 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => onSpaceChange('all')}
               className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
@@ -1870,7 +1871,7 @@ function Sidebar({
           </div>
         </section>
 
-        <div ref={accountMenuRef} className="relative mt-auto pt-4">
+        <div ref={accountMenuRef} className="relative mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
             <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[70] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
@@ -1881,8 +1882,8 @@ function Sidebar({
                 </div>
               </div>
               <div className="mt-2 grid gap-1">
-                {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Upgrade Plan" onClick={() => { setAccountMenuOpen(false); onOpenBilling(); }} />}
-                {currentRole === 'owner' && <div className="my-1 border-t border-white/10" />}
+                {ownerCanUpgrade && <AccountMenuButton icon={CreditCard} label="Upgrade Plan" onClick={() => { setAccountMenuOpen(false); onOpenBilling(); }} />}
+                {ownerCanUpgrade && <div className="my-1 border-t border-white/10" />}
                 <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#AAA4B3]">Hubs</p>
                 {workspaces.map((workspace) => (
                   <button
@@ -1912,11 +1913,13 @@ function Sidebar({
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
+                        {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
                       <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
+                        {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
                     </>
                   )}
@@ -3096,7 +3099,7 @@ function KnowledgeView({
         <button onClick={onCreate} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New article</button>
       </div>
       {visibleArticles.length === 0 ? (
-        <div className={cn('rounded-lg border p-6', surface(theme))}><h3 className="font-bold">Start with the TriCord User Guide</h3><p className={cn('mt-2 text-sm leading-6', muted(theme))}>The complete PDF guide is available to every user. Create additional articles for your own guides, FAQs, best practices, troubleshooting steps, and procedures.</p><div className="mt-4 flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a><a href={USER_GUIDE_DOCX_URL} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Download DOCX</a><button onClick={onCreate} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Create article</button></div></div>
+        <div className={cn('rounded-lg border p-6', surface(theme))}><h3 className="font-bold">Start with the TriCord User Guide</h3><p className={cn('mt-2 text-sm leading-6', muted(theme))}>The complete PDF guide is available to every user. Create additional articles for your own guides, FAQs, best practices, troubleshooting steps, and procedures.</p><div className="mt-4 flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a><button onClick={onCreate} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Create article</button></div></div>
       ) : (
         <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.5fr)]">
           <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1 scroll-area">
@@ -3166,7 +3169,7 @@ function AdminView({
     ...(businessModules.employee_records ? [{ key: 'manage_hr' as const, label: 'Employee records' }, { key: 'approve_leave' as const, label: 'Leave approvals' }] : []),
     ...(businessModules.attendance_tracking ? [{ key: 'manage_timekeeping' as const, label: 'Attendance settings' }, { key: 'correct_attendance' as const, label: 'Attendance corrections' }] : []),
     ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll preparation' }, { key: 'approve_payroll' as const, label: 'Approve preparation drafts' }] : []),
-    ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Business reports' }] : []),
+    ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Attendance reports' }] : []),
     { key: 'view_audit', label: 'Audit history' },
   ];
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
@@ -3856,6 +3859,7 @@ function SettingsModal({
     personalization: 'Personalization',
     profile: 'Profile',
     settings: 'Settings',
+    subscription: 'Subscription',
     help: 'Help center',
     about: 'About TriCord',
     report: 'Report a problem',
@@ -4145,10 +4149,32 @@ function SettingsModal({
           </div>
         )}
 
+
+        {section === 'subscription' && (
+          <section className={cn('rounded-lg border p-4', surface(theme))}>
+            <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Current subscription</p>
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-2xl font-bold capitalize">{workspace?.plan ?? 'Free'} Plan</p>
+                <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Billing belongs to this Hub. Changing this subscription will not affect other Hubs you belong to.</p>
+              </div>
+              <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
+            </div>
+            <div className={cn('mt-5 rounded-lg border p-4', subtleButton(theme))}>
+              <p className="font-bold">{workspace?.name ?? 'Current Hub'}</p>
+              <p className={cn('mt-1 text-sm', muted(theme))}>Use this area to upgrade, manage payment details, review invoices, or change billing through Stripe.</p>
+            </div>
+            <button type="button" onClick={onUpgrade} className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">
+              <CreditCard className="h-4 w-4" />
+              {(workspace?.plan ?? 'free') === 'free' ? 'Upgrade plan' : 'Manage subscription'}
+            </button>
+          </section>
+        )}
+
         {section === 'help' && (
           <div className="grid gap-4 lg:grid-cols-3">
             <section className={cn('rounded-lg border p-4 lg:col-span-3', surface(theme))}>
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete guide for Free, Plus, and Pro users.</p></div><div className="flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a><a href={USER_GUIDE_DOCX_URL} className={cn('inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Download DOCX</a></div></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete guide for Free, Plus, and Pro users.</p></div><div className="flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a></div></div>
             </section>
             <HelpTopic title="Active Feed and discussions" body="Create focused posts inside Rooms, keep replies attached to the original topic, add reactions, forward selected messages, archive outcomes, and reopen the side discussion panel from a post when needed." theme={theme} />
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />
@@ -4157,7 +4183,7 @@ function SettingsModal({
             <HelpTopic title="Attendance Tracking" body="Optional Business Module. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
             <HelpTopic title="Employee Records" body="Optional Business Module. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
             <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
-            <HelpTopic title="Business Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
+            <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
             <HelpTopic title="Email features" body="Plus and Pro Hubs can forward emails into a Room address so the message becomes a focused post, then send outbound email from a discussion using email commands such as @recipient@example.com or cc:. Use email only when your organization has permission and a lawful business reason to contact the recipient." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />

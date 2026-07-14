@@ -589,7 +589,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   const saveHoliday = async () => { if (!supabase) return; if (!holidayDraft.holiday_date || !holidayDraft.name.trim()) { onNotice('Enter a holiday date and name.'); return; } const { error } = await supabase.from('workforce_holidays').insert({ workspace_id: workspaceId, holiday_date: holidayDraft.holiday_date, name: holidayDraft.name.trim(), country_code: settings?.country_code, paid: true }); if (error) onNotice(error.message); else { setHolidayModalOpen(false); await load(); } };
   const deleteHoliday = async (id: string) => { if (!supabase) return; const { error } = await supabase.from('workforce_holidays').delete().eq('id', id); if (error) onNotice(error.message); else await load(); };
   return <>
-    <ModuleFrame icon={Gauge} title="Business Reports" subtitle="Operational records and workforce summaries" theme={theme}>
+    <ModuleFrame icon={Gauge} title="Attendance Reports" subtitle="Attendance records and workforce summaries" theme={theme}>
       <div className="mb-5 grid max-w-3xl items-end gap-3 sm:grid-cols-2 xl:grid-cols-[160px_160px_180px_150px]">
         <Field label="From" type="date" value={from} onChange={setFrom} theme={theme} compact />
         <Field label="To" type="date" value={to} onChange={setTo} theme={theme} compact />

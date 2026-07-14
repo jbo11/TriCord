@@ -1814,18 +1814,19 @@ function Sidebar({
               </button>
             )}
           </div>
-          <div className="space-y-2 overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-28 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => onSpaceChange('all')}
               className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
             >
               All posts
             </button>
-            {orderedSpaces.map((space) => {
+            {orderedSpaces.map((space, index) => {
               const canManageRoom = canManageSpaces || (currentRole === 'member' && space.created_by === profile?.id);
               const preference = roomPreferences[space.id];
               const pinned = Boolean(preference?.pinned);
               const menuOpen = roomMenuId === space.id;
+              const menuOpensUp = orderedSpaces.length - index <= 2;
               return (
                 <div
                   key={space.id}
@@ -1860,7 +1861,7 @@ function Sidebar({
                       <EllipsisVertical className="h-4 w-4" />
                     </button>
                     {menuOpen && (
-                      <div className={cn('absolute right-2 top-10 z-[65] w-48 rounded-lg border p-1.5 text-sm shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
+                      <div className={cn('absolute right-2 z-[65] w-48 rounded-lg border p-1.5 text-sm shadow-2xl', menuOpensUp ? 'bottom-10' : 'top-10', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
                         <RoomMenuButton icon={Mail} label={premiumFeatures ? 'Email forwarding' : 'Email forwarding (Plus)'} onClick={() => { setRoomMenuId(''); onOpenRoomEmail(space); }} />
                         {canManageRoom && <RoomMenuButton icon={Pencil} label="Rename" onClick={() => { setRoomMenuId(''); onRenameSpace(space); }} />}
                         <RoomMenuButton icon={GripVertical} label={reorderMode ? 'Finish moving' : 'Move'} onClick={() => { setReorderMode((active) => !active); setRoomMenuId(''); }} />

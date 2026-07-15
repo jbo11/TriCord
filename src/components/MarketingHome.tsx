@@ -116,7 +116,7 @@ function Hero({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEve
       <div className="relative z-10 mx-auto grid min-h-[760px] max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8">
         <div className="max-w-3xl">
           <p className="mb-5 inline-flex rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-bold text-[#FFD7B0] shadow-lg shadow-black/20 backdrop-blur">Built for busy teams that need fewer loose ends</p>
-          <h1 className="text-5xl font-black leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">Run client work, projects, and team operations from one calm hub.</h1>
+          <h1 className="text-5xl font-black leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">Run client work, projects, & team operations from one hub.</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-white/74 sm:text-xl">TriCord gives small businesses and startups one place to discuss work, assign follow-ups, save procedures, and manage everyday operations without chasing updates across separate tools.</p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <MarketingButton href={appUrl} onClick={onLaunch}>Start Free <ArrowRight className="h-4 w-4" /></MarketingButton>

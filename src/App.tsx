@@ -1797,7 +1797,7 @@ function Sidebar({
               </button>
             )}
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-4 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-36 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => onSpaceChange('all')}
               className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
@@ -3309,8 +3309,38 @@ function AdminView({
                               <option value="guest">Guest</option>
                             </select>
                           </div>
-                          {membership.role === 'admin' && <details className={cn('mt-3 rounded-md border px-2 py-1.5', subtleButton(theme))}><summary className="cursor-pointer text-xs font-semibold">Capabilities</summary><div className="mt-2 grid gap-2">{capabilityOptions.map((option) => <label key={option.key} className="flex items-center justify-between gap-3 text-xs"><span>{option.label}</span><input type="checkbox" checked={Boolean(capabilityRows[membership.user_id]?.[option.key])} disabled={currentRole !== 'owner'} onChange={(event) => void setCapability(membership.user_id, option.key, event.target.checked)} className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60" /></label>)}</div></details>}
-                          {membership.role === 'guest' && canManageRoomAccess && <details className={cn('mt-3 rounded-md border px-2 py-1.5', subtleButton(theme))}><summary className="cursor-pointer text-xs font-semibold">Room access</summary><div className="mt-2 grid gap-2">{spaces.map((space) => <label key={space.id} className="flex items-center justify-between gap-3 text-xs"><span className="truncate">{space.name}</span><input type="checkbox" checked={Boolean(guestRoomAccess[membership.user_id]?.includes(space.id))} onChange={(event) => void toggleGuestRoom(membership.user_id, space.id, event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" /></label>)}{spaces.length === 0 && <span className={cn('text-xs', muted(theme))}>No Rooms available.</span>}</div></details>}
+                          {membership.role === 'admin' && (
+                            <AdminAccessDetails title="Capabilities" theme={theme}>
+                              {capabilityOptions.map((option) => (
+                                <label key={option.key} className="flex items-center justify-between gap-3 text-xs">
+                                  <span>{option.label}</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(capabilityRows[membership.user_id]?.[option.key])}
+                                    disabled={currentRole !== 'owner'}
+                                    onChange={(event) => void setCapability(membership.user_id, option.key, event.target.checked)}
+                                    className="h-4 w-4 accent-[var(--accent)] disabled:opacity-60"
+                                  />
+                                </label>
+                              ))}
+                            </AdminAccessDetails>
+                          )}
+                          {membership.role === 'guest' && canManageRoomAccess && (
+                            <AdminAccessDetails title="Room access" theme={theme}>
+                              {spaces.map((space) => (
+                                <label key={space.id} className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="truncate">{space.name}</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(guestRoomAccess[membership.user_id]?.includes(space.id))}
+                                    onChange={(event) => void toggleGuestRoom(membership.user_id, space.id, event.target.checked)}
+                                    className="h-4 w-4 accent-[var(--accent)]"
+                                  />
+                                </label>
+                              ))}
+                              {spaces.length === 0 && <span className={cn('text-xs', muted(theme))}>No Rooms available.</span>}
+                            </AdminAccessDetails>
+                          )}
                         </div>
                       );
                     })}
@@ -3324,6 +3354,17 @@ function AdminView({
         </section>
       </div>
     </StaticPanel>
+  );
+}
+
+function AdminAccessDetails({ title, theme, children }: { title: string; theme: 'light' | 'dark'; children: ReactNode }) {
+  return (
+    <details className={cn('mt-3 rounded-md border px-2 py-1.5', subtleButton(theme))}>
+      <summary className="cursor-pointer text-xs font-semibold">{title}</summary>
+      <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto pr-1 scroll-area">
+        {children}
+      </div>
+    </details>
   );
 }
 

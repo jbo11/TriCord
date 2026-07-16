@@ -2495,6 +2495,7 @@ function ThreadPanel({
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<AppComment | null>(null);
   const [forwarding, setForwarding] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
@@ -2553,6 +2554,7 @@ function ThreadPanel({
   useEffect(() => {
     setForwarding(false);
     setForwardModalOpen(false);
+    setComposerEmojiOpen(false);
     setSelectedMessageIds(new Set());
   }, [post?.id]);
 
@@ -2640,6 +2642,32 @@ function ThreadPanel({
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const cursorStart = textareaRef.current?.selectionStart ?? reply.length;
+    const cursorEnd = textareaRef.current?.selectionEnd ?? cursorStart;
+    const nextReply = `${reply.slice(0, cursorStart)}${emoji}${reply.slice(cursorEnd)}`;
+    const nextCursor = cursorStart + emoji.length;
+    setReply(nextReply);
+    setComposerEmojiOpen(false);
+    setMentionMatch(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const addPastedImages = (clipboardFiles: FileList) => {
+    const pastedImages = Array.from(clipboardFiles).filter((file) => file.type.startsWith('image/'));
+    if (pastedImages.length === 0) return false;
+    const now = Date.now();
+    addFiles(pastedImages.map((file, index) => {
+      const extension = getImageExtension(file.type);
+      const filename = file.name && file.name !== 'image.png' ? file.name : `pasted-image-${now}-${index + 1}.${extension}`;
+      return new File([file], filename, { type: file.type || 'image/png', lastModified: now });
+    }));
+    return true;
   };
 
   const beginForward = (messageId: string) => {
@@ -2873,6 +2901,9 @@ function ThreadPanel({
               setMentionMatch(null);
             }
           }}
+          onPaste={(event) => {
+            if (addPastedImages(event.clipboardData.files)) event.preventDefault();
+          }}
           onBlur={() => window.setTimeout(() => setMentionMatch(null), 120)}
           placeholder="Reply to this post"
           className={cn('h-24 w-full resize-none rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none', subtleButton(theme))}
@@ -2901,6 +2932,23 @@ function ThreadPanel({
         )}
         {dragActive && <p className="mt-2 text-center text-sm font-semibold text-[var(--accent-strong)]">Drop files to attach</p>}
         {error && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
+        {composerEmojiOpen && (
+          <div className={cn('absolute bottom-16 left-4 z-[70] overflow-hidden rounded-xl border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-white')}>
+            <div className={cn('flex items-center justify-between border-b px-3 py-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}>
+              <span className="text-sm font-semibold">Emoji</span>
+              <button type="button" aria-label="Close emoji picker" title="Close" onClick={() => setComposerEmojiOpen(false)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[var(--accent-soft)]')}><X className="h-4 w-4" /></button>
+            </div>
+            <Suspense fallback={<div className={cn('flex h-48 w-72 items-center justify-center text-sm', muted(theme))}>Loading emoji...</div>}>
+              <EmojiPicker
+                width={320}
+                height={360}
+                lazyLoadEmojis
+                previewConfig={{ showPreview: false }}
+                onEmojiClick={(emojiData) => insertEmoji(emojiData.emoji)}
+              />
+            </Suspense>
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-3">
           <div ref={attachmentMenuRef} className="relative">
             <button
@@ -2921,6 +2969,7 @@ function ThreadPanel({
                 onMedia={() => openFilePicker('image/*,video/*')}
                 onCamera={() => openFilePicker('image/*,video/*', true)}
                 onAudio={() => openFilePicker('audio/*')}
+                onEmoji={() => { setAttachmentMenuOpen(false); setComposerEmojiOpen(true); }}
               />
             )}
           </div>
@@ -3288,12 +3337,13 @@ function GoogleDriveAttachmentModal({ theme, onClose, onAdd }: { theme: 'light' 
   );
 }
 
-function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera, onAudio }: { theme: 'light' | 'dark'; cameraAvailable: boolean; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void }) {
+function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera, onAudio, onEmoji }: { theme: 'light' | 'dark'; cameraAvailable: boolean; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void; onEmoji: () => void }) {
   const items: { label: string; icon: LucideIcon; action: () => void; color: string; disabled?: boolean }[] = [
     { label: 'Document', icon: FileText, action: onDocument, color: 'text-[#7C3AED]' },
     { label: 'Photos & videos', icon: ImageIcon, action: onMedia, color: 'text-[#2563EB]' },
     { label: 'Camera', icon: Camera, action: onCamera, color: 'text-[#DB2777]', disabled: !cameraAvailable },
     { label: 'Audio', icon: Headphones, action: onAudio, color: 'text-[#EA580C]' },
+    { label: 'Emoji', icon: Smile, action: onEmoji, color: 'text-[var(--accent-strong)]' },
   ];
   return (
     <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
@@ -5964,6 +6014,13 @@ async function openGoogleDrivePicker() {
       reject(caughtError instanceof Error ? caughtError : new Error('Google Drive picker could not be opened.'));
     }
   });
+}
+
+function getImageExtension(mimeType: string) {
+  const subtype = mimeType.split('/')[1]?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+  if (subtype === 'jpeg') return 'jpg';
+  if (subtype === 'svgxml') return 'svg';
+  return subtype || 'png';
 }
 
 function validateUploadFile(file: File) {

@@ -35,7 +35,7 @@ Deno.serve(async (request) => {
 
     const { data: subscription, error: subscriptionError } = await adminClient
       .from('subscriptions')
-      .select('stripe_subscription_id, stripe_subscription_item_id, status')
+      .select('stripe_subscription_id, stripe_subscription_item_id, status, seat_quantity')
       .eq('workspace_id', workspaceId)
       .maybeSingle();
     if (subscriptionError) throw new Error(subscriptionError.message);
@@ -48,9 +48,22 @@ Deno.serve(async (request) => {
 
     const seatQuantity = await getBillableSeatCount(adminClient, workspaceId);
     const stripe = new Stripe(requiredEnv('STRIPE_SECRET_KEY'));
+    const currentItem = await stripe.subscriptionItems.retrieve(subscription.stripe_subscription_item_id);
+    const previousQuantity = currentItem.quantity ?? subscription.seat_quantity ?? 1;
+
+    if (seatQuantity === previousQuantity) {
+      await adminClient.from('subscriptions').update({
+        seat_quantity: seatQuantity,
+        seat_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('workspace_id', workspaceId);
+      return json({ synced: true, changed: false, seatQuantity, previousQuantity });
+    }
+
+    const prorationBehavior = seatQuantity > previousQuantity ? 'always_invoice' : 'create_prorations';
     const item = await stripe.subscriptionItems.update(subscription.stripe_subscription_item_id, {
       quantity: seatQuantity,
-      proration_behavior: 'create_prorations',
+      proration_behavior: prorationBehavior,
       metadata: { workspace_id: workspaceId, billable_seat_count: String(seatQuantity) },
     });
 
@@ -60,7 +73,14 @@ Deno.serve(async (request) => {
       updated_at: new Date().toISOString(),
     }).eq('workspace_id', workspaceId);
 
-    return json({ synced: true, seatQuantity: item.quantity ?? seatQuantity });
+    return json({
+      synced: true,
+      changed: true,
+      seatQuantity: item.quantity ?? seatQuantity,
+      previousQuantity,
+      prorationBehavior,
+      subscriptionItemId: item.id,
+    });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Seat billing could not be synchronized.' }, 400);
   }

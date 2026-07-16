@@ -130,6 +130,7 @@ const REPLY_DRAFT_STORAGE_KEY = 'tricord_reply_draft';
 const FORM_DRAFT_STORAGE_KEY = 'tricord_form_draft';
 const NOTIFICATION_PREFS_STORAGE_KEY = 'tricord_notification_preferences';
 const UNREAD_SEEN_STORAGE_KEY = 'tricord_unread_seen';
+const ROOM_COMPACT_STORAGE_KEY = 'tricord_room_compact';
 const MAX_DIRECT_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const MAX_MESSAGE_CHARACTERS = 10000;
@@ -190,6 +191,11 @@ interface RoomPreference {
   space_id: string;
   position: number;
   pinned: boolean;
+}
+
+interface RoomCompactSettings {
+  all: boolean;
+  rooms: Record<string, boolean>;
 }
 
 type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'notifications' | 'help' | 'about' | 'report';
@@ -1971,12 +1977,15 @@ function Sidebar({
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [roomMenuId, setRoomMenuId] = useState('');
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [compactMenuOpen, setCompactMenuOpen] = useState(false);
+  const [roomCompactSettings, setRoomCompactSettings] = useState<RoomCompactSettings>({ all: false, rooms: {} });
   const [reorderMode, setReorderMode] = useState(false);
   const [draggedRoomId, setDraggedRoomId] = useState('');
   const [workforceNavOpen, setWorkforceNavOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
+  const roomCompactStorageKey = `${ROOM_COMPACT_STORAGE_KEY}:${profile?.id ?? email}:${workspaceId}`;
   const planKey = plan.toLowerCase();
   const planLabel = planKey.charAt(0).toUpperCase() + planKey.slice(1);
   const ownerCanUpgrade = currentRole === 'owner' && ['free', 'plus'].includes(planKey);
@@ -2009,11 +2018,16 @@ function Sidebar({
       if (!roomMenuRef.current?.contains(event.target as Node)) {
         setRoomMenuId('');
         setSortMenuOpen(false);
+        setCompactMenuOpen(false);
       }
     };
     document.addEventListener('pointerdown', closeMenu);
     return () => document.removeEventListener('pointerdown', closeMenu);
   }, [roomMenuId]);
+
+  useEffect(() => {
+    setRoomCompactSettings(readRoomCompactSettings(roomCompactStorageKey));
+  }, [roomCompactStorageKey]);
 
   const saveSortedRooms = async (mode: 'name' | 'newest') => {
     const sorted = [...orderedSpaces].sort((a, b) => {
@@ -2026,6 +2040,28 @@ function Sidebar({
     await onSaveRoomOrder(sorted);
     setRoomMenuId('');
     setSortMenuOpen(false);
+  };
+
+  const persistRoomCompactSettings = (nextSettings: RoomCompactSettings) => {
+    setRoomCompactSettings(nextSettings);
+    window.localStorage.setItem(roomCompactStorageKey, JSON.stringify(nextSettings));
+  };
+
+  const isRoomCompact = (spaceId: string) => roomCompactSettings.all || Boolean(roomCompactSettings.rooms[spaceId]);
+
+  const toggleAllRoomCompact = () => {
+    const nextSettings = { all: !roomCompactSettings.all, rooms: roomCompactSettings.rooms };
+    persistRoomCompactSettings(nextSettings);
+    setCompactMenuOpen(false);
+    setRoomMenuId('');
+  };
+
+  const toggleSingleRoomCompact = (spaceId: string) => {
+    const nextRooms = { ...roomCompactSettings.rooms, [spaceId]: !Boolean(roomCompactSettings.rooms[spaceId]) };
+    if (!nextRooms[spaceId]) delete nextRooms[spaceId];
+    persistRoomCompactSettings({ all: roomCompactSettings.all, rooms: nextRooms });
+    setCompactMenuOpen(false);
+    setRoomMenuId('');
   };
 
   const dropRoom = async (targetRoomId: string) => {
@@ -2108,6 +2144,7 @@ function Sidebar({
               const preference = roomPreferences[space.id];
               const pinned = Boolean(preference?.pinned);
               const menuOpen = roomMenuId === space.id;
+              const compactRoom = isRoomCompact(space.id);
               const menuOpensUp = orderedSpaces.length > 3 && orderedSpaces.length - index <= 2;
               return (
                 <div
@@ -2128,7 +2165,7 @@ function Sidebar({
                       <span className="truncate text-sm font-semibold">{space.name}</span>
                       {pinned && <Pin className="h-3.5 w-3.5 shrink-0" aria-label="Pinned room" />}
                     </div>
-                    <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>
+                    {!compactRoom && <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>}
                   </button>
                   {reorderMode && !pinned && <GripVertical className={cn('pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2', muted(theme))} />}
                   <div ref={menuOpen ? roomMenuRef : undefined}>
@@ -2137,7 +2174,7 @@ function Sidebar({
                       aria-label={`${space.name} room options`}
                       title="Room options"
                       aria-expanded={menuOpen}
-                      onClick={() => { setRoomMenuId((current) => current === space.id ? '' : space.id); setSortMenuOpen(false); }}
+                      onClick={() => { setRoomMenuId((current) => current === space.id ? '' : space.id); setSortMenuOpen(false); setCompactMenuOpen(false); }}
                       className={cn('absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md transition', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
                     >
                       <EllipsisVertical className="h-4 w-4" />
@@ -2152,6 +2189,13 @@ function Sidebar({
                           <div className="mb-1 ml-3 border-l border-current/15 pl-2">
                             <RoomMenuButton label="Name A–Z" onClick={() => void saveSortedRooms('name')} />
                             <RoomMenuButton label="Newest first" onClick={() => void saveSortedRooms('newest')} />
+                          </div>
+                        )}
+                        <RoomMenuButton icon={List} label="Collapse" trailing={ChevronRight} active={compactMenuOpen} onClick={() => { setCompactMenuOpen((open) => !open); setSortMenuOpen(false); }} />
+                        {compactMenuOpen && (
+                          <div className="mb-1 ml-3 border-l border-current/15 pl-2">
+                            <RoomMenuButton label={roomCompactSettings.all ? 'Show details for all rooms' : 'Apply to all rooms'} onClick={toggleAllRoomCompact} />
+                            <RoomMenuButton label={compactRoom && !roomCompactSettings.all ? 'Show details for this room' : 'Apply only to this room'} onClick={() => toggleSingleRoomCompact(space.id)} />
                           </div>
                         )}
                         <RoomMenuButton icon={pinned ? PinOff : Pin} label={pinned ? 'Unpin' : 'Pin'} onClick={() => { setRoomMenuId(''); void onSetRoomPinned(space, !pinned); }} />
@@ -2686,8 +2730,11 @@ function ThreadPanel({
 
   if (!post) {
     return (
-      <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#121017]/55' : 'border-[#E7E3EA] bg-[#FFFFFF]/45')}>
+      <aside className={cn('fixed inset-y-0 right-0 z-[75] flex w-full max-w-[min(100vw,28rem)] flex-col overflow-hidden border-l p-6 shadow-2xl xl:relative xl:z-auto xl:w-auto xl:max-w-none xl:shadow-none', theme === 'dark' ? 'border-white/10 bg-[#121017]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
         <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
+        <div className="absolute left-4 top-4 z-10 hidden xl:block">
+          <ThreadWidthPresets theme={theme} width={width} onWidthChange={onWidthChange} />
+        </div>
         {canClose && <button
           type="button"
           aria-label="Toggle side panel"
@@ -2703,7 +2750,7 @@ function ThreadPanel({
   }
 
   return (
-    <aside className={cn('relative hidden min-h-0 overflow-hidden border-l xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#121017]/55' : 'border-[#E7E3EA] bg-[#FFFFFF]/45')}>
+    <aside className={cn('fixed inset-y-0 right-0 z-[75] flex w-full max-w-[min(100vw,28rem)] flex-col overflow-hidden border-l shadow-2xl xl:relative xl:z-auto xl:w-auto xl:max-w-none xl:shadow-none', theme === 'dark' ? 'border-white/10 bg-[#121017]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
       <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
       <div className="shrink-0 border-b border-inherit p-5">
         <div className="flex items-start justify-between gap-3">
@@ -2711,6 +2758,8 @@ function ThreadPanel({
             <StatusPill state={post.state} />
             <h2 className="mt-3 text-xl font-bold tracking-tight">{post.title}</h2>
           </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ThreadWidthPresets theme={theme} width={width} onWidthChange={onWidthChange} />
           {canClose && <button
             type="button"
             aria-label="Toggle side panel"
@@ -2720,6 +2769,7 @@ function ThreadPanel({
           >
             <PanelRightClose className="h-4 w-4" />
           </button>}
+          </div>
         </div>
       </div>
 
@@ -3156,6 +3206,25 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
   );
 }
 
+function ThreadWidthPresets({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
+  return (
+    <div className="hidden items-center gap-1 xl:flex" aria-label="Discussion pane width">
+      {[20, 50, 80].map((preset) => (
+        <button
+          key={preset}
+          type="button"
+          aria-label={`Set discussion pane to ${preset}%`}
+          title={`Set discussion pane to ${preset}%`}
+          onClick={() => onWidthChange(preset)}
+          className={cn('h-7 rounded-md border px-2 text-xs font-semibold transition', Math.round(width) === preset ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : subtleButton(theme))}
+        >
+          {preset}%
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
   const dragStartRef = useRef<{ x: number; width: number; containerWidth: number } | null>(null);
   return (
@@ -3164,7 +3233,7 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
       aria-label="Resize discussion pane"
       aria-orientation="vertical"
       aria-valuemin={20}
-      aria-valuemax={50}
+      aria-valuemax={80}
       aria-valuenow={Math.round(width)}
       tabIndex={0}
       title="Drag to resize discussion pane"
@@ -3183,7 +3252,7 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
         if (event.key === 'ArrowLeft') { event.preventDefault(); onWidthChange(width + 2); }
         if (event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width - 2); }
       }}
-      className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[var(--accent)]' : 'after:bg-[#B8B3C2] hover:after:bg-[var(--accent-strong)]')}
+      className={cn('absolute inset-y-0 left-0 z-40 hidden w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition xl:block after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[var(--accent)]' : 'after:bg-[#B8B3C2] hover:after:bg-[var(--accent-strong)]')}
     />
   );
 }
@@ -6177,12 +6246,22 @@ function groupReactions(reactions: AppReaction[]) {
   return [...groups.values()];
 }
 
+function readRoomCompactSettings(storageKey: string): RoomCompactSettings {
+  if (typeof window === 'undefined') return { all: false, rooms: {} };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as Partial<RoomCompactSettings>;
+    return { all: Boolean(parsed.all), rooms: parsed.rooms && typeof parsed.rooms === 'object' ? parsed.rooms : {} };
+  } catch {
+    return { all: false, rooms: {} };
+  }
+}
+
 function getCommentsSignature(comments: Pick<AppComment, 'id' | 'updated_at'>[]) {
   return comments.map((comment) => `${comment.id}:${comment.updated_at}`).join('|');
 }
 
 function clampThreadWidth(width: number) {
-  return Math.round(Math.min(50, Math.max(20, width)) * 10) / 10;
+  return Math.round(Math.min(80, Math.max(20, width)) * 10) / 10;
 }
 
 function hasAuthCallbackInUrl(routeKey = '') {
@@ -6253,7 +6332,7 @@ function getInitialChatOpen() {
 function getInitialThreadWidth() {
   if (typeof window === 'undefined') return 30;
   const savedWidth = Number(window.localStorage.getItem(THREAD_WIDTH_STORAGE_KEY));
-  return clampThreadWidth(Number.isFinite(savedWidth) && savedWidth >= 20 && savedWidth <= 50 ? savedWidth : 30);
+  return clampThreadWidth(Number.isFinite(savedWidth) && savedWidth >= 20 && savedWidth <= 80 ? savedWidth : 30);
 }
 
 function normalizeSharedUrl(value: string) {

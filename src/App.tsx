@@ -1390,7 +1390,7 @@ export default function App() {
             className={cn('grid min-h-0 grid-cols-1 overflow-hidden', showThreadPanel && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
             style={{ '--thread-width': `${threadWidth}%` } as CSSProperties}
           >
-            <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-3 py-3 md:px-6 md:py-5">
               {notice && (
                 <div className="mb-4 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
                   {notice}
@@ -1401,7 +1401,7 @@ export default function App() {
                 <>
                   <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length} theme={theme} />
                   <SortBar sort={sort} setSort={setSort} theme={theme} />
-                  <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area">
+                  <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area md:mt-4">
                     {currentSpacePosts.length > 0 ? (
                       <div className="grid gap-4 pb-6">
                         {currentSpacePosts.map((post) => (
@@ -2320,7 +2320,7 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'canceled').length;
 
   return (
-    <div className="grid shrink-0 gap-3 sm:grid-cols-3">
+    <div className="grid shrink-0 grid-cols-3 gap-2 md:gap-3">
       <MetricCard label="Open posts" value={openPosts} theme={theme} />
       <MetricCard label="Knowledge" value={knowledgeCount} theme={theme} />
       <MetricCard label="Open tasks" value={openTasks} theme={theme} />
@@ -2330,21 +2330,21 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
 
 function MetricCard({ label, value, theme }: { label: string; value: number; theme: 'light' | 'dark' }) {
   return (
-    <div className={cn('relative overflow-hidden rounded-lg border p-4', surface(theme))}>
-      <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>{label}</p>
-      <p className="mt-3 text-2xl font-bold">{value}</p>
+    <div className={cn('relative overflow-hidden rounded-lg border p-3 md:p-4', surface(theme))}>
+      <p className={cn('text-[10px] font-semibold uppercase tracking-[0.14em] md:text-xs md:tracking-[0.18em]', muted(theme))}>{label}</p>
+      <p className="mt-2 text-2xl font-bold md:mt-3">{value}</p>
     </div>
   );
 }
 
 function SortBar({ sort, setSort, theme }: { sort: SortMode; setSort: (sort: SortMode) => void; theme: 'light' | 'dark' }) {
   return (
-    <div className={cn('mt-4 flex shrink-0 gap-2 overflow-hidden rounded-lg border p-1', surface(theme))}>
+    <div className={cn('mt-3 flex shrink-0 gap-1 overflow-hidden rounded-lg border p-1 md:mt-4 md:gap-2', surface(theme))}>
       {sortOptions.map((option) => (
         <button
           key={option.value}
           onClick={() => setSort(option.value)}
-          className={cn('h-9 rounded-md px-3 text-sm font-semibold transition', sort === option.value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : cn(muted(theme), 'hover:bg-[var(--accent-soft)]'))}
+          className={cn('h-8 rounded-md px-2 text-xs font-semibold transition md:h-9 md:px-3 md:text-sm', sort === option.value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : cn(muted(theme), 'hover:bg-[var(--accent-soft)]'))}
         >
           {option.label}
         </button>

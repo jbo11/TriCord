@@ -4323,13 +4323,10 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
             if (!supabase || !email.trim()) return;
             setSubmitting(true);
             setError('');
-            const redirectUrl = new URL(window.location.href);
-            redirectUrl.hash = '';
-            redirectUrl.search = '';
-            if (inviteToken) redirectUrl.searchParams.set('invite', inviteToken);
+            const redirectUrl = getAuthRedirectUrl(inviteToken);
             const { error: signInError } = await supabase.auth.signInWithOtp({
               email: email.trim(),
-              options: { emailRedirectTo: redirectUrl.toString() },
+              options: { emailRedirectTo: redirectUrl },
             });
             setSubmitting(false);
             if (signInError) setError(signInError.message);
@@ -5570,15 +5567,10 @@ function clampThreadWidth(width: number) {
   return Math.round(Math.min(50, Math.max(20, width)) * 10) / 10;
 }
 
-
-function getInitialRouteKey() {
-  if (typeof window === 'undefined') return '';
-  const redirectedPath = window.sessionStorage.getItem(ROUTE_REDIRECT_STORAGE_KEY);
-  if (redirectedPath) {
-    window.sessionStorage.removeItem(ROUTE_REDIRECT_STORAGE_KEY);
-    window.history.replaceState({}, '', redirectedPath);
-  }
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+function hasAuthCallbackInUrl(routeKey = '') {
+  if (typeof window === 'undefined') return false;
+  const value = routeKey || `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return /(?:[?#&](?:access_token|refresh_token|code|error|error_description)=)|type=magiclink/.test(value);
 }
 
 function getBasePath() {
@@ -5588,6 +5580,24 @@ function getBasePath() {
 
 function getAppUrl() {
   return `${getBasePath()}app`;
+}
+
+function getAuthRedirectUrl(inviteToken = '') {
+  const url = new URL(getAppUrl(), window.location.origin);
+  url.hash = '';
+  url.search = '';
+  if (inviteToken) url.searchParams.set('invite', inviteToken);
+  return url.toString();
+}
+
+function getInitialRouteKey() {
+  if (typeof window === 'undefined') return '';
+  const redirectedPath = window.sessionStorage.getItem(ROUTE_REDIRECT_STORAGE_KEY);
+  if (redirectedPath) {
+    window.sessionStorage.removeItem(ROUTE_REDIRECT_STORAGE_KEY);
+    window.history.replaceState({}, '', redirectedPath);
+  }
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
 function stripBasePath(pathname: string) {
@@ -5601,8 +5611,7 @@ function stripBasePath(pathname: string) {
 const MARKETING_PAGE_ROUTES = new Set(['', 'privacy', 'terms', 'acceptable-use', 'refund', 'subprocessors', 'security', 'accessibility']);
 
 function isMarketingHomeRoute(inviteToken: string, routeKey = '') {
-  void routeKey;
-  if (inviteToken) return false;
+  if (inviteToken || hasAuthCallbackInUrl(routeKey)) return false;
   const path = stripBasePath(window.location.pathname).replace(/\/+$/, '');
   return MARKETING_PAGE_ROUTES.has(path);
 }

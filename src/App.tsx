@@ -125,6 +125,7 @@ const CHAT_OPEN_STORAGE_KEY = 'tricord_chat_open';
 const ACCENT_STORAGE_KEY = 'tricord_accent';
 const WORKSPACE_STORAGE_KEY = 'tricord_workspace_id';
 const ROUTE_REDIRECT_STORAGE_KEY = 'tricord_redirect_path';
+const REPLY_DRAFT_STORAGE_KEY = 'tricord_reply_draft';
 const MAX_DIRECT_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const MAX_MESSAGE_CHARACTERS = 10000;
@@ -334,6 +335,13 @@ export default function App() {
   const memberProfiles = useMemo(
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [profiles],
+  );
+  const hubMentionProfiles = useMemo(
+    () => memberships
+      .map((membership) => profiles[membership.user_id])
+      .filter((profile): profile is AppProfile => Boolean(profile))
+      .sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
+    [memberships, profiles],
   );
   const billableSeatCount = useMemo(
     () => Math.max(memberships.filter((membership) => membership.role !== 'guest').length, 1),
@@ -1266,6 +1274,7 @@ export default function App() {
               reactions={reactions}
               recentPosts={posts.filter((item) => item.state === 'open' && item.id !== selectedPost?.id)}
               profiles={profiles}
+              mentionProfiles={hubMentionProfiles}
               theme={theme}
               currentUserId={session.user.id}
               canManage={canManageAdmin}
@@ -2142,6 +2151,7 @@ function ThreadPanel({
   reactions,
   recentPosts,
   profiles,
+  mentionProfiles,
   theme,
   currentUserId,
   canManage,
@@ -2167,6 +2177,7 @@ function ThreadPanel({
   reactions: AppReaction[];
   recentPosts: AppPost[];
   profiles: Record<string, AppProfile>;
+  mentionProfiles: AppProfile[];
   theme: 'light' | 'dark';
   currentUserId: string;
   canManage: boolean;
@@ -2201,6 +2212,18 @@ function ThreadPanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
+  const loadedDraftKeyRef = useRef('');
+  const skipNextDraftSaveRef = useRef(false);
+  const [mentionMatch, setMentionMatch] = useState<{ query: string; start: number; end: number } | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const replyDraftKey = post ? `${REPLY_DRAFT_STORAGE_KEY}:${currentUserId}:${post.workspace_id}:${post.id}` : '';
+  const mentionOptions = useMemo(() => {
+    if (!mentionMatch) return [];
+    const query = mentionMatch.query.toLowerCase();
+    return mentionProfiles
+      .filter((mentionProfile) => getMentionSearchValue(mentionProfile).includes(query))
+      .slice(0, 8);
+  }, [mentionMatch, mentionProfiles]);
   const emailCommandPreview = premiumEmail ? parseEmailSendCommand(reply) : null;
   const lockedEmailCommand = !premiumEmail && Boolean(parseEmailSendCommand(reply));
   const connectedEmailAccounts = premiumEmail ? emailAccounts.filter((account) => account.is_connected) : [];
@@ -2208,6 +2231,32 @@ function ThreadPanel({
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [post?.id, comments.length, attachments.length, reactions.length]);
+
+  useEffect(() => {
+    setMentionMatch(null);
+    setMentionActiveIndex(0);
+    if (!replyDraftKey) {
+      loadedDraftKeyRef.current = '';
+      setReply('');
+      return;
+    }
+    loadedDraftKeyRef.current = replyDraftKey;
+    skipNextDraftSaveRef.current = true;
+    setReply(window.localStorage.getItem(replyDraftKey) ?? '');
+    setFiles([]);
+    setExternalAttachments([]);
+    setReplyingTo(null);
+  }, [replyDraftKey]);
+
+  useEffect(() => {
+    if (!replyDraftKey || loadedDraftKeyRef.current !== replyDraftKey) return;
+    if (skipNextDraftSaveRef.current) {
+      skipNextDraftSaveRef.current = false;
+      return;
+    }
+    if (reply.trim()) window.localStorage.setItem(replyDraftKey, reply);
+    else window.localStorage.removeItem(replyDraftKey);
+  }, [reply, replyDraftKey]);
 
   useEffect(() => {
     setForwarding(false);
@@ -2278,6 +2327,27 @@ function ThreadPanel({
     if (capture) input.setAttribute('capture', 'environment');
     else input.removeAttribute('capture');
     input.click();
+  };
+
+  const updateMentionMatch = (value: string, caretPosition = textareaRef.current?.selectionStart ?? value.length) => {
+    const nextMatch = getActiveMentionMatch(value, caretPosition);
+    setMentionMatch(nextMatch);
+    setMentionActiveIndex(0);
+  };
+
+  const insertMention = (mentionProfile: AppProfile) => {
+    if (!mentionMatch) return;
+    const mentionName = getProfileName(mentionProfile, mentionProfile.email.split('@')[0] || 'Hub member').replace(/\s+/g, ' ').trim();
+    const mentionText = `@${mentionName} `;
+    const nextReply = `${reply.slice(0, mentionMatch.start)}${mentionText}${reply.slice(mentionMatch.end)}`;
+    const nextCursor = mentionMatch.start + mentionText.length;
+    setReply(nextReply);
+    setMentionMatch(null);
+    setMentionActiveIndex(0);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
   };
 
   const beginForward = (messageId: string) => {
@@ -2395,7 +2465,7 @@ function ThreadPanel({
       )}
 
       <form
-        className={cn('shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[var(--accent)]', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F5F4F7]')}
+        className={cn('relative shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[var(--accent)]', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F5F4F7]')}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragLeave={(event) => { event.preventDefault(); if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
@@ -2412,6 +2482,8 @@ function ThreadPanel({
           setError('');
           try {
             await onReply(reply.trim(), files, externalAttachments, replyingTo?.id ?? null, selectedEmailAccountId || 'room');
+            if (replyDraftKey) window.localStorage.removeItem(replyDraftKey);
+            setMentionMatch(null);
             setReply('');
             setFiles([]);
             setExternalAttachments([]);
@@ -2462,10 +2534,43 @@ function ThreadPanel({
             <button type="button" aria-label="Cancel reply" title="Cancel reply" onClick={() => setReplyingTo(null)}><X className="h-3.5 w-3.5" /></button>
           </div>
         )}
+        {mentionOptions.length > 0 && (
+          <MentionSuggestions
+            theme={theme}
+            profiles={mentionOptions}
+            activeIndex={Math.min(mentionActiveIndex, mentionOptions.length - 1)}
+            onSelect={insertMention}
+          />
+        )}
         <textarea
           ref={textareaRef}
           value={reply}
-          onChange={(event) => setReply(event.target.value)}
+          onChange={(event) => {
+            setReply(event.target.value);
+            updateMentionMatch(event.target.value, event.target.selectionStart);
+          }}
+          onClick={(event) => updateMentionMatch(reply, event.currentTarget.selectionStart)}
+          onKeyUp={(event) => {
+            if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) return;
+            updateMentionMatch(reply, event.currentTarget.selectionStart);
+          }}
+          onKeyDown={(event) => {
+            if (mentionOptions.length === 0) return;
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setMentionActiveIndex((index) => (index + 1) % mentionOptions.length);
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setMentionActiveIndex((index) => (index - 1 + mentionOptions.length) % mentionOptions.length);
+            } else if (event.key === 'Enter' || event.key === 'Tab') {
+              event.preventDefault();
+              insertMention(mentionOptions[Math.min(mentionActiveIndex, mentionOptions.length - 1)]);
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              setMentionMatch(null);
+            }
+          }}
+          onBlur={() => window.setTimeout(() => setMentionMatch(null), 120)}
           placeholder="Reply to this post"
           className={cn('h-24 w-full resize-none rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none', subtleButton(theme))}
         />
@@ -2537,6 +2642,35 @@ function ThreadPanel({
         />
       )}
     </aside>
+  );
+}
+
+
+function MentionSuggestions({ theme, profiles, activeIndex, onSelect }: { theme: 'light' | 'dark'; profiles: AppProfile[]; activeIndex: number; onSelect: (profile: AppProfile) => void }) {
+  return (
+    <div className={cn('mb-2 max-h-60 overflow-y-auto rounded-lg border p-1 shadow-2xl scroll-area', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-white')}>
+      {profiles.map((profile, index) => {
+        const name = getProfileName(profile, profile.email.split('@')[0] || 'Hub member');
+        const fullName = getProfileFullName(profile, name);
+        return (
+          <button
+            key={profile.id}
+            type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(profile);
+            }}
+            className={cn('flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition', index === activeIndex ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F7F6F9]')}
+          >
+            <Avatar profile={profile} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{name}</span>
+              {fullName !== name && <span className={cn('block truncate text-xs', muted(theme))}>{fullName}</span>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -3453,14 +3587,16 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
 
 function StaticPanel({ theme, title, icon: Icon, children }: { theme: 'light' | 'dark'; title: string; icon: LucideIcon; children: ReactNode }) {
   return (
-    <div className="min-h-0 overflow-hidden">
-      <div className="mb-5 flex items-center gap-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="mb-5 flex shrink-0 items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#17151D] text-[#FAF9FC]">
           <Icon className="h-5 w-5" />
         </div>
         <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
       </div>
-      {children}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-8 pr-1 scroll-area">
+        {children}
+      </div>
     </div>
   );
 }
@@ -5695,6 +5831,22 @@ function extractUrls(value: string) {
   return [...new Set(matches.map(normalizeSharedUrl).filter((url): url is string => Boolean(url)))].slice(0, 3);
 }
 
+
+
+function getActiveMentionMatch(value: string, caretPosition: number) {
+  const prefix = value.slice(0, caretPosition);
+  const match = prefix.match(/(^|\s)@([^@#\s]*)$/);
+  if (!match) return null;
+  const query = match[2] ?? '';
+  return { query, start: caretPosition - query.length - 1, end: caretPosition };
+}
+
+function getMentionSearchValue(profile: AppProfile) {
+  return [profile.nickname, profile.display_name, profile.full_name, profile.email]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
 
 function parseEmailSendCommand(value: string) {
   const trimmed = value.trim();

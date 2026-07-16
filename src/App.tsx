@@ -1977,7 +1977,6 @@ function Sidebar({
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [roomMenuId, setRoomMenuId] = useState('');
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
-  const [compactMenuOpen, setCompactMenuOpen] = useState(false);
   const [roomCompactSettings, setRoomCompactSettings] = useState<RoomCompactSettings>({ all: false, rooms: {} });
   const [reorderMode, setReorderMode] = useState(false);
   const [draggedRoomId, setDraggedRoomId] = useState('');
@@ -2018,7 +2017,6 @@ function Sidebar({
       if (!roomMenuRef.current?.contains(event.target as Node)) {
         setRoomMenuId('');
         setSortMenuOpen(false);
-        setCompactMenuOpen(false);
       }
     };
     document.addEventListener('pointerdown', closeMenu);
@@ -2047,21 +2045,10 @@ function Sidebar({
     window.localStorage.setItem(roomCompactStorageKey, JSON.stringify(nextSettings));
   };
 
-  const isRoomCompact = (spaceId: string) => roomCompactSettings.all || Boolean(roomCompactSettings.rooms[spaceId]);
+  const isRoomCompact = () => roomCompactSettings.all;
 
   const toggleAllRoomCompact = () => {
-    const nextSettings = { all: !roomCompactSettings.all, rooms: roomCompactSettings.rooms };
-    persistRoomCompactSettings(nextSettings);
-    setCompactMenuOpen(false);
-    setRoomMenuId('');
-  };
-
-  const toggleSingleRoomCompact = (spaceId: string) => {
-    const nextRooms = { ...roomCompactSettings.rooms, [spaceId]: !Boolean(roomCompactSettings.rooms[spaceId]) };
-    if (!nextRooms[spaceId]) delete nextRooms[spaceId];
-    persistRoomCompactSettings({ all: roomCompactSettings.all, rooms: nextRooms });
-    setCompactMenuOpen(false);
-    setRoomMenuId('');
+    persistRoomCompactSettings({ all: !roomCompactSettings.all, rooms: {} });
   };
 
   const dropRoom = async (targetRoomId: string) => {
@@ -2133,18 +2120,24 @@ function Sidebar({
             )}
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-36 pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-            <button
-              onClick={() => onSpaceChange('all')}
-              className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
-            >
-              All posts
-            </button>
+            <div className={cn('flex items-center rounded-lg border transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}>
+              <button onClick={() => onSpaceChange('all')} className="min-w-0 flex-1 p-3 text-left text-sm font-semibold">All posts</button>
+              <button
+                type="button"
+                aria-label={roomCompactSettings.all ? 'Expand all rooms' : 'Collapse all rooms'}
+                title={roomCompactSettings.all ? 'Expand all rooms' : 'Collapse all rooms'}
+                onClick={toggleAllRoomCompact}
+                className={cn('mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition', roomCompactSettings.all ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
+              >
+                {roomCompactSettings.all ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+              </button>
+            </div>
             {orderedSpaces.map((space, index) => {
               const canManageRoom = canManageSpaces || (currentRole === 'member' && space.created_by === profile?.id);
               const preference = roomPreferences[space.id];
               const pinned = Boolean(preference?.pinned);
               const menuOpen = roomMenuId === space.id;
-              const compactRoom = isRoomCompact(space.id);
+              const compactRoom = isRoomCompact();
               const menuOpensUp = orderedSpaces.length > 3 && orderedSpaces.length - index <= 2;
               return (
                 <div
@@ -2174,7 +2167,7 @@ function Sidebar({
                       aria-label={`${space.name} room options`}
                       title="Room options"
                       aria-expanded={menuOpen}
-                      onClick={() => { setRoomMenuId((current) => current === space.id ? '' : space.id); setSortMenuOpen(false); setCompactMenuOpen(false); }}
+                      onClick={() => { setRoomMenuId((current) => current === space.id ? '' : space.id); setSortMenuOpen(false); }}
                       className={cn('absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md transition', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
                     >
                       <EllipsisVertical className="h-4 w-4" />
@@ -2189,13 +2182,6 @@ function Sidebar({
                           <div className="mb-1 ml-3 border-l border-current/15 pl-2">
                             <RoomMenuButton label="Name A–Z" onClick={() => void saveSortedRooms('name')} />
                             <RoomMenuButton label="Newest first" onClick={() => void saveSortedRooms('newest')} />
-                          </div>
-                        )}
-                        <RoomMenuButton icon={List} label="Collapse" trailing={ChevronRight} active={compactMenuOpen} onClick={() => { setCompactMenuOpen((open) => !open); setSortMenuOpen(false); }} />
-                        {compactMenuOpen && (
-                          <div className="mb-1 ml-3 border-l border-current/15 pl-2">
-                            <RoomMenuButton label={roomCompactSettings.all ? 'Show details for all rooms' : 'Apply to all rooms'} onClick={toggleAllRoomCompact} />
-                            <RoomMenuButton label={compactRoom && !roomCompactSettings.all ? 'Show details for this room' : 'Apply only to this room'} onClick={() => toggleSingleRoomCompact(space.id)} />
                           </div>
                         )}
                         <RoomMenuButton icon={pinned ? PinOff : Pin} label={pinned ? 'Unpin' : 'Pin'} onClick={() => { setRoomMenuId(''); void onSetRoomPinned(space, !pinned); }} />
@@ -6250,7 +6236,7 @@ function readRoomCompactSettings(storageKey: string): RoomCompactSettings {
   if (typeof window === 'undefined') return { all: false, rooms: {} };
   try {
     const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as Partial<RoomCompactSettings>;
-    return { all: Boolean(parsed.all), rooms: parsed.rooms && typeof parsed.rooms === 'object' ? parsed.rooms : {} };
+    return { all: Boolean(parsed.all), rooms: {} };
   } catch {
     return { all: false, rooms: {} };
   }

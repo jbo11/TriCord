@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUpDown,
+  Bell,
   Banknote,
   BriefcaseBusiness,
   Bug,
@@ -126,6 +127,9 @@ const ACCENT_STORAGE_KEY = 'tricord_accent';
 const WORKSPACE_STORAGE_KEY = 'tricord_workspace_id';
 const ROUTE_REDIRECT_STORAGE_KEY = 'tricord_redirect_path';
 const REPLY_DRAFT_STORAGE_KEY = 'tricord_reply_draft';
+const FORM_DRAFT_STORAGE_KEY = 'tricord_form_draft';
+const NOTIFICATION_PREFS_STORAGE_KEY = 'tricord_notification_preferences';
+const UNREAD_SEEN_STORAGE_KEY = 'tricord_unread_seen';
 const MAX_DIRECT_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const MAX_MESSAGE_CHARACTERS = 10000;
@@ -162,7 +166,7 @@ const launchPlans: Array<{
   highlights: string[];
 }> = [
   { id: 'free', name: 'Free', monthly: '$0', annual: '$0', description: 'For new teams organizing work in one Hub.', highlights: ['1 owned Hub', '10 members included', '10 Rooms', '90 days message history', '1 GB storage'] },
-  { id: 'plus', name: 'Plus', monthly: '$9', annual: '$7', description: 'For small teams that need more collaboration capacity and optional business modules.', highlights: ['5 owned Hubs', '100 members included', 'Unlimited Rooms', 'Unlimited history', '100 GB storage'] },
+  { id: 'plus', name: 'Plus', monthly: '$9', annual: '$7', description: 'For small teams that need more collaboration capacity and optional workforce tools.', highlights: ['5 owned Hubs', '100 members included', 'Unlimited Rooms', 'Unlimited history', '100 GB storage'] },
   { id: 'pro', name: 'Pro', monthly: '$18', annual: '$15', description: 'For growing teams that need advanced controls and visibility.', highlights: ['Unlimited Hubs', 'Unlimited fair-use members', '1 TB storage', 'Advanced controls', '1 year audit history'] },
 ];
 
@@ -188,7 +192,7 @@ interface RoomPreference {
   pinned: boolean;
 }
 
-type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'help' | 'about' | 'report';
+type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'notifications' | 'help' | 'about' | 'report';
 interface HubSetup { name: string; countryCode: string; currencyCode: string; locale: string; timezone: string; dateFormat: string; payrollFrequency: string; firstDayOfWeek: number }
 
 interface ConfirmDialogState {
@@ -197,6 +201,28 @@ interface ConfirmDialogState {
   confirmLabel?: string;
   onConfirm: () => Promise<void> | void;
 }
+
+interface NotificationPreferences {
+  desktop: boolean;
+  sound: boolean;
+  tabBadges: boolean;
+  mentions: boolean;
+  directMessages: boolean;
+  taskAssignments: boolean;
+  announcements: boolean;
+  email: boolean;
+}
+
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  desktop: false,
+  sound: false,
+  tabBadges: true,
+  mentions: true,
+  directMessages: true,
+  taskAssignments: true,
+  announcements: true,
+  email: false,
+};
 interface BusinessModuleConfig {
   key: BusinessModuleKey;
   title: string;
@@ -247,6 +273,140 @@ interface BusinessModuleDisclosureState {
   nextModules: BusinessModules;
 }
 
+
+
+function readStoredJson<T>(key: string, fallback: T): T {
+  if (!key || typeof window === 'undefined') return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (!stored) return fallback;
+    return { ...fallback, ...JSON.parse(stored) } as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function isEmptyDraftValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).every(isEmptyDraftValue);
+  return false;
+}
+
+function usePersistentDraft<T>(storageKey: string, initialValue: T, isEmpty: (value: T) => boolean = (value) => isEmptyDraftValue(value)) {
+  const [draft, setDraft] = useState<T>(() => readStoredJson(storageKey, initialValue));
+  const loadedKeyRef = useRef(storageKey);
+  const skipSaveRef = useRef(false);
+
+  useEffect(() => {
+    loadedKeyRef.current = storageKey;
+    skipSaveRef.current = true;
+    setDraft(readStoredJson(storageKey, initialValue));
+  }, [storageKey, initialValue]);
+
+  useEffect(() => {
+    if (!storageKey || loadedKeyRef.current !== storageKey || typeof window === 'undefined') return;
+    if (skipSaveRef.current) {
+      skipSaveRef.current = false;
+      return;
+    }
+    if (isEmpty(draft)) window.localStorage.removeItem(storageKey);
+    else window.localStorage.setItem(storageKey, JSON.stringify(draft));
+  }, [draft, isEmpty, storageKey]);
+
+  const clearDraft = useCallback(() => {
+    if (storageKey && typeof window !== 'undefined') window.localStorage.removeItem(storageKey);
+    skipSaveRef.current = true;
+    setDraft(initialValue);
+  }, [initialValue, storageKey]);
+
+  return [draft, setDraft, clearDraft] as const;
+}
+
+function getFormDraftKey(kind: string, userId: string, workspaceId: string, recordId = 'new') {
+  return [FORM_DRAFT_STORAGE_KEY, userId, workspaceId, kind, recordId].filter(Boolean).join(':');
+}
+
+function getNotificationPreferenceKey(userId: string) {
+  return `${NOTIFICATION_PREFS_STORAGE_KEY}:${userId}`;
+}
+
+function getUnreadSeenKey(userId: string, workspaceId: string) {
+  return `${UNREAD_SEEN_STORAGE_KEY}:${userId}:${workspaceId}`;
+}
+
+function includesCurrentUserMention(body: string, profile?: AppProfile) {
+  if (!profile) return false;
+  const aliases = [profile.nickname, profile.display_name, profile.full_name, profile.email]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase().replace(/\s+/g, ' ').trim());
+  const normalized = body.toLowerCase().replace(/\s+/g, ' ');
+  return aliases.some((alias) => alias && (normalized.includes(`@${alias}`) || normalized.includes(`@${alias.split('@')[0]}`)));
+}
+
+function updateFaviconBadge(count: number, enabled: boolean) {
+  if (typeof document === 'undefined') return;
+  let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!icon) {
+    icon = document.createElement('link');
+    icon.rel = 'icon';
+    document.head.appendChild(icon);
+  }
+  if (!enabled || count <= 0) {
+    icon.href = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/favicon.ico`;
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.fillStyle = '#F97316';
+  context.beginPath();
+  context.moveTo(18, 6);
+  context.lineTo(46, 6);
+  context.quadraticCurveTo(58, 6, 58, 18);
+  context.lineTo(58, 46);
+  context.quadraticCurveTo(58, 58, 46, 58);
+  context.lineTo(18, 58);
+  context.quadraticCurveTo(6, 58, 6, 46);
+  context.lineTo(6, 18);
+  context.quadraticCurveTo(6, 6, 18, 6);
+  context.closePath();
+  context.fill();
+  context.fillStyle = '#DC2626';
+  context.beginPath();
+  context.arc(46, 18, 15, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = '#FFFFFF';
+  context.font = 'bold 18px system-ui, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(count > 9 ? '9+' : String(count), 46, 18);
+  icon.href = canvas.toDataURL('image/png');
+}
+
+function playNotificationTone() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 740;
+    gain.gain.setValueAtTime(0.001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.2);
+  } catch {
+    // Ignore browsers that block programmatic audio until the next user gesture.
+  }
+}
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
@@ -299,9 +459,12 @@ export default function App() {
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
   const [chatOpen, setChatOpen] = useState(true);
   const [chatOnOtherPages, setChatOnOtherPages] = useState(getInitialChatOpen);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
+  const [lastSeenActivityAt, setLastSeenActivityAt] = useState(new Date().toISOString());
   const selectedPostIdRef = useRef('');
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
+  const previousUnreadCountRef = useRef(0);
 
   const spaceIdsKey = spaces.map((space) => space.id).join(',');
 
@@ -347,6 +510,35 @@ export default function App() {
     () => Math.max(memberships.filter((membership) => membership.role !== 'guest').length, 1),
     [memberships],
   );
+  const notificationPrefsKey = session?.user.id ? getNotificationPreferenceKey(session.user.id) : '';
+  const unreadSeenKey = session?.user.id && workspaceId ? getUnreadSeenKey(session.user.id, workspaceId) : '';
+  const unreadActivityCount = useMemo(() => {
+    if (!session?.user.id || !workspaceId || !lastSeenActivityAt) return 0;
+    const cutoff = Date.parse(lastSeenActivityAt);
+    if (!Number.isFinite(cutoff)) return 0;
+    const currentUserId = session.user.id;
+    const currentUserProfile = profiles[currentUserId];
+    const newComments = comments.filter((comment) => comment.author_id !== currentUserId && Date.parse(comment.created_at) > cutoff);
+    const mentionCommentIds = new Set(newComments.filter((comment) => includesCurrentUserMention(comment.body, currentUserProfile)).map((comment) => comment.id));
+    const mentionCount = notificationPreferences.mentions ? mentionCommentIds.size : 0;
+    const commentCount = notificationPreferences.directMessages
+      ? newComments.filter((comment) => !mentionCommentIds.has(comment.id)).length
+      : 0;
+    const postCount = notificationPreferences.announcements
+      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.created_at) > cutoff).length
+      : 0;
+    const assignedTaskCount = notificationPreferences.taskAssignments
+      ? tasks.filter((task) => task.assignee_id === currentUserId && Date.parse(task.created_at) > cutoff).length
+      : 0;
+    return commentCount + mentionCount + postCount + assignedTaskCount;
+  }, [comments, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, session?.user.id, tasks, workspaceId]);
+
+  const markWorkspaceActivitySeen = useCallback(() => {
+    if (!unreadSeenKey || typeof window === 'undefined') return;
+    const now = new Date().toISOString();
+    window.localStorage.setItem(unreadSeenKey, now);
+    setLastSeenActivityAt(now);
+  }, [unreadSeenKey]);
 
   const openBillingPortal = useCallback(async () => {
     if (!supabase || !workspaceId) return;
@@ -436,6 +628,60 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOnOtherPages));
   }, [chatOnOtherPages]);
+
+  useEffect(() => {
+    if (!notificationPrefsKey) {
+      setNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES);
+      return;
+    }
+    setNotificationPreferences(readStoredJson(notificationPrefsKey, DEFAULT_NOTIFICATION_PREFERENCES));
+  }, [notificationPrefsKey]);
+
+  useEffect(() => {
+    if (!notificationPrefsKey) return;
+    window.localStorage.setItem(notificationPrefsKey, JSON.stringify(notificationPreferences));
+  }, [notificationPreferences, notificationPrefsKey]);
+
+  useEffect(() => {
+    if (!unreadSeenKey) {
+      setLastSeenActivityAt(new Date().toISOString());
+      return;
+    }
+    const stored = window.localStorage.getItem(unreadSeenKey);
+    const initialSeenAt = stored || new Date().toISOString();
+    if (!stored) window.localStorage.setItem(unreadSeenKey, initialSeenAt);
+    setLastSeenActivityAt(initialSeenAt);
+  }, [unreadSeenKey]);
+
+  useEffect(() => {
+    if (!unreadSeenKey) return;
+    const markVisible = () => {
+      if (document.visibilityState === 'visible') markWorkspaceActivitySeen();
+    };
+    window.addEventListener('focus', markVisible);
+    document.addEventListener('visibilitychange', markVisible);
+    return () => {
+      window.removeEventListener('focus', markVisible);
+      document.removeEventListener('visibilitychange', markVisible);
+    };
+  }, [markWorkspaceActivitySeen, unreadSeenKey]);
+
+  useEffect(() => {
+    if (marketingHome) return;
+    const visibleCount = notificationPreferences.tabBadges ? unreadActivityCount : 0;
+    document.title = visibleCount > 0 ? `(${visibleCount}) TriCord` : 'TriCord';
+    updateFaviconBadge(visibleCount, notificationPreferences.tabBadges);
+  }, [marketingHome, notificationPreferences.tabBadges, unreadActivityCount]);
+
+  useEffect(() => {
+    if (unreadActivityCount > previousUnreadCountRef.current && document.visibilityState === 'hidden') {
+      if (notificationPreferences.desktop && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('TriCord update', { body: `${unreadActivityCount} unread update${unreadActivityCount === 1 ? '' : 's'}` });
+      }
+      if (notificationPreferences.sound) playNotificationTone();
+    }
+    previousUnreadCountRef.current = unreadActivityCount;
+  }, [notificationPreferences.desktop, notificationPreferences.sound, unreadActivityCount]);
 
   useEffect(() => {
     const toggleDiscussionPanel = (event: KeyboardEvent) => {
@@ -1351,6 +1597,7 @@ export default function App() {
           theme={theme}
           spaces={spaces}
           defaultSpaceId={activeSpaceId === 'all' ? spaces[0]?.id ?? '' : activeSpaceId}
+          draftKey={getFormDraftKey('post', session.user.id, workspaceId)}
           onClose={() => setComposerOpen(false)}
           onCreate={async ({ title, body, spaceId }) => {
             if (!session.user) return;
@@ -1367,6 +1614,7 @@ export default function App() {
           spaces={spaces}
           defaultSpaceId={editingPost.space_id}
           initialPost={editingPost}
+          draftKey={getFormDraftKey('post', session.user.id, workspaceId, editingPost.id)}
           onClose={() => setEditingPost(null)}
           onCreate={async ({ title, body, spaceId }) => {
             await updatePost(editingPost.id, { title, body, spaceId });
@@ -1380,6 +1628,7 @@ export default function App() {
       {spaceModalOpen && (
         <SpaceModal
           theme={theme}
+          draftKey={getFormDraftKey('room', session.user.id, workspaceId)}
           onClose={() => setSpaceModalOpen(false)}
           onCreate={async ({ name, access }) => {
             if (!session.user) return;
@@ -1418,6 +1667,7 @@ export default function App() {
         <TaskModal
           theme={theme}
           profiles={memberProfiles}
+          draftKey={getFormDraftKey('task', session.user.id, workspaceId)}
           onClose={() => setTaskModalOpen(false)}
           onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
             if (!session.user) return;
@@ -1433,6 +1683,7 @@ export default function App() {
           theme={theme}
           profiles={memberProfiles}
           task={editingTask}
+          draftKey={getFormDraftKey('task', session.user.id, workspaceId, editingTask.id)}
           onClose={() => setEditingTask(null)}
           onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
             await updateTask(editingTask.id, { title, description, projectName, priority, tags, assigneeId, dueAt });
@@ -1445,6 +1696,7 @@ export default function App() {
       {knowledgeModalOpen && (
         <KnowledgeArticleModal
           theme={theme}
+          draftKey={getFormDraftKey('knowledge', session.user.id, workspaceId)}
           onClose={() => setKnowledgeModalOpen(false)}
           onSave={async (input) => {
             await createKnowledgeArticle(workspaceId, session.user.id, input);
@@ -1458,6 +1710,7 @@ export default function App() {
         <KnowledgeArticleModal
           theme={theme}
           article={editingKnowledgeArticle}
+          draftKey={getFormDraftKey('knowledge', session.user.id, workspaceId, editingKnowledgeArticle.id)}
           onClose={() => setEditingKnowledgeArticle(null)}
           onSave={async (input) => {
             await updateKnowledgeArticle(editingKnowledgeArticle.id, input);
@@ -1514,9 +1767,11 @@ export default function App() {
           ownerEmail={ownerEmail}
           premiumEmail={premiumFeatures}
           businessModules={savedBusinessModules}
+          notificationPreferences={notificationPreferences}
+          onNotificationPreferencesChange={setNotificationPreferences}
           onBusinessModulesChange={async (nextModules) => {
             if (!selectedWorkspace || currentRole !== 'owner') return;
-            if (!premiumFeatures) throw new Error('Business modules are available on Plus and Pro plans.');
+            if (!premiumFeatures) throw new Error('Workforce tools are available on Plus and Pro plans.');
             const changedEntry = BUSINESS_MODULE_CONFIGS.find((module) => !getBusinessModules(selectedWorkspace)[module.key] && nextModules[module.key]);
             if (changedEntry && !hasAcknowledgedBusinessModule(selectedWorkspace, changedEntry.key)) {
               setBusinessModuleDisclosure({ module: changedEntry, nextModules });
@@ -1787,7 +2042,7 @@ function Sidebar({
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
           {currentRole !== 'guest' && <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />}
-          {showBusinessNav && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Business</span><button type="button" aria-label={workforceNavOpen ? 'Collapse business navigation' : 'Expand business navigation'} title={workforceNavOpen ? 'Collapse business navigation' : 'Expand business navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
+          {showBusinessNav && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Workforce</span><button type="button" aria-label={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} title={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
           {showBusinessNav && workforceNavOpen && <>
             {canViewTimekeeping && <NavButton icon={Clock3} label="Attendance" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
             {canViewHr && <NavButton icon={BriefcaseBusiness} label="Employee Records" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
@@ -1921,12 +2176,14 @@ function Sidebar({
                       <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Bell} label="Notifications" onClick={() => openAccountView('notifications')} />
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                         {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
                       <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Bell} label="Notifications" onClick={() => openAccountView('notifications')} />
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                         {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
@@ -2555,6 +2812,17 @@ function ThreadPanel({
             updateMentionMatch(reply, event.currentTarget.selectionStart);
           }}
           onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              if (mentionOptions.length > 0) {
+                event.preventDefault();
+                insertMention(mentionOptions[Math.min(mentionActiveIndex, mentionOptions.length - 1)]);
+                return;
+              }
+              if (event.altKey) return;
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+              return;
+            }
             if (mentionOptions.length === 0) return;
             if (event.key === 'ArrowDown') {
               event.preventDefault();
@@ -2562,7 +2830,7 @@ function ThreadPanel({
             } else if (event.key === 'ArrowUp') {
               event.preventDefault();
               setMentionActiveIndex((index) => (index - 1 + mentionOptions.length) % mentionOptions.length);
-            } else if (event.key === 'Enter' || event.key === 'Tab') {
+            } else if (event.key === 'Tab') {
               event.preventDefault();
               insertMention(mentionOptions[Math.min(mentionActiveIndex, mentionOptions.length - 1)]);
             } else if (event.key === 'Escape') {
@@ -3394,7 +3662,7 @@ function AdminView({
             <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
-                <div><p className="text-sm font-semibold">Delegated capabilities</p><p className={cn('text-xs leading-5', muted(theme))}>Admins receive only the business capabilities the Owner enables. Every capability is enforced in both the interface and database.</p></div>
+                <div><p className="text-sm font-semibold">Delegated capabilities</p><p className={cn('text-xs leading-5', muted(theme))}>Admins receive only the workforce capabilities the Owner enables. Every capability is enforced in both the interface and database.</p></div>
               </div>
             </div>
           )}
@@ -3606,6 +3874,7 @@ function PostComposer({
   spaces,
   defaultSpaceId,
   initialPost,
+  draftKey,
   onClose,
   onCreate,
 }: {
@@ -3613,13 +3882,20 @@ function PostComposer({
   spaces: AppSpace[];
   defaultSpaceId: string;
   initialPost?: AppPost;
+  draftKey: string;
   onClose: () => void;
   onCreate: (input: { title: string; body: string; spaceId: string }) => Promise<void>;
 }) {
-  const [title, setTitle] = useState(initialPost?.title ?? '');
-  const [body, setBody] = useState(initialPost?.body ?? '');
-  const [spaceId, setSpaceId] = useState(defaultSpaceId);
+  const initialDraft = useMemo(() => ({
+    title: initialPost?.title ?? '',
+    body: initialPost?.body ?? '',
+    spaceId: initialPost?.space_id ?? defaultSpaceId,
+  }), [defaultSpaceId, initialPost?.body, initialPost?.space_id, initialPost?.title]);
+  const [draft, setDraft, clearDraft] = usePersistentDraft(draftKey, initialDraft);
   const [submitting, setSubmitting] = useState(false);
+  const title = draft.title;
+  const body = draft.body;
+  const spaceId = draft.spaceId;
 
   return (
     <ModalShell theme={theme} title={initialPost ? 'Edit post' : 'New post'} onClose={onClose}>
@@ -3629,13 +3905,17 @@ function PostComposer({
           event.preventDefault();
           if (!title.trim() || !body.trim() || !spaceId) return;
           setSubmitting(true);
-          await onCreate({ title: title.trim(), body: body.trim(), spaceId });
-          setSubmitting(false);
+          try {
+            await onCreate({ title: title.trim(), body: body.trim(), spaceId });
+            clearDraft();
+          } finally {
+            setSubmitting(false);
+          }
         }}
       >
         <label className="grid gap-2 text-sm font-semibold">
           Room
-          <select value={spaceId} onChange={(event) => setSpaceId(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
+          <select value={spaceId} onChange={(event) => setDraft((current) => ({ ...current, spaceId: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
             {spaces.map((space) => (
               <option key={space.id} value={space.id}>
                 {space.name}
@@ -3645,11 +3925,11 @@ function PostComposer({
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           Title
-          <input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+          <input value={title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           Body
-          <textarea value={body} onChange={(event) => setBody(event.target.value)} className={cn('h-36 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
+          <textarea value={body} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} className={cn('h-36 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
         </label>
         <button disabled={submitting || !title.trim() || !body.trim() || !spaceId} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -3660,11 +3940,18 @@ function PostComposer({
   );
 }
 
-function KnowledgeArticleModal({ theme, article, onClose, onSave }: { theme: 'light' | 'dark'; article?: KnowledgeArticle; onClose: () => void; onSave: (input: { category: KnowledgeCategory; title: string; summary: string; content: string }) => Promise<void> }) {
-  const [category, setCategory] = useState<KnowledgeCategory>(article?.category ?? 'documentation');
-  const [title, setTitle] = useState(article?.title ?? '');
-  const [summary, setSummary] = useState(article?.summary ?? '');
-  const [content, setContent] = useState(article?.content ?? '');
+function KnowledgeArticleModal({ theme, article, draftKey, onClose, onSave }: { theme: 'light' | 'dark'; article?: KnowledgeArticle; draftKey: string; onClose: () => void; onSave: (input: { category: KnowledgeCategory; title: string; summary: string; content: string }) => Promise<void> }) {
+  const initialDraft = useMemo(() => ({
+    category: article?.category ?? ('documentation' as KnowledgeCategory),
+    title: article?.title ?? '',
+    summary: article?.summary ?? '',
+    content: article?.content ?? '',
+  }), [article?.category, article?.content, article?.summary, article?.title]);
+  const [draft, setDraft, clearDraft] = usePersistentDraft(draftKey, initialDraft);
+  const category = draft.category;
+  const title = draft.title;
+  const summary = draft.summary;
+  const content = draft.content;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   return (
@@ -3673,13 +3960,13 @@ function KnowledgeArticleModal({ theme, article, onClose, onSave }: { theme: 'li
         event.preventDefault();
         if (!title.trim() || !content.trim()) return;
         setSubmitting(true); setError('');
-        try { await onSave({ category, title: title.trim(), summary: summary.trim(), content: content.trim() }); }
+        try { await onSave({ category, title: title.trim(), summary: summary.trim(), content: content.trim() }); clearDraft(); }
         catch (caughtError) { setError(getErrorMessage(caughtError)); setSubmitting(false); }
       }}>
-        <label className="grid gap-2 text-sm font-semibold">Category<select value={category} onChange={(event) => setCategory(event.target.value as KnowledgeCategory)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>{knowledgeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-        <label className="grid gap-2 text-sm font-semibold">Title<input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
-        <label className="grid gap-2 text-sm font-semibold">Summary<input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="A short description for search results" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
-        <label className="grid gap-2 text-sm font-semibold">Article content<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Write clear steps, answers, or procedures..." className={cn('h-64 resize-y rounded-lg border bg-transparent p-3 leading-6 outline-none', subtleButton(theme))} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Category<select value={category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value as KnowledgeCategory }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>{knowledgeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className="grid gap-2 text-sm font-semibold">Title<input value={title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Summary<input value={summary} onChange={(event) => setDraft((current) => ({ ...current, summary: event.target.value }))} placeholder="A short description for search results" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Article content<textarea value={content} onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))} placeholder="Write clear steps, answers, or procedures..." className={cn('h-64 resize-y rounded-lg border bg-transparent p-3 leading-6 outline-none', subtleButton(theme))} /></label>
         <button disabled={submitting || !title.trim() || !content.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:opacity-50">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}{article ? 'Save article' : 'Publish article'}</button>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
       </form>
@@ -3689,15 +3976,19 @@ function KnowledgeArticleModal({ theme, article, onClose, onSave }: { theme: 'li
 
 function SpaceModal({
   theme,
+  draftKey,
   onClose,
   onCreate,
 }: {
   theme: 'light' | 'dark';
+  draftKey: string;
   onClose: () => void;
   onCreate: (input: { name: string; access: SpaceAccess }) => Promise<void>;
 }) {
-  const [name, setName] = useState('');
-  const [access, setAccess] = useState<SpaceAccess>('public');
+  const initialDraft = useMemo(() => ({ name: '', access: 'public' as SpaceAccess }), []);
+  const [draft, setDraft, clearDraft] = usePersistentDraft(draftKey, initialDraft);
+  const name = draft.name;
+  const access = draft.access;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -3712,6 +4003,7 @@ function SpaceModal({
           setError('');
           try {
             await onCreate({ name: name.trim(), access });
+            clearDraft();
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -3721,11 +4013,11 @@ function SpaceModal({
       >
         <label className="grid gap-2 text-sm font-semibold">
           Room name
-          <input value={name} onChange={(event) => setName(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+          <input value={name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           Access
-          <select value={access} onChange={(event) => setAccess(event.target.value as SpaceAccess)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
+          <select value={access} onChange={(event) => setDraft((current) => ({ ...current, access: event.target.value as SpaceAccess }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
             <option value="public">Public room</option>
             <option value="private">Private room</option>
             <option value="invite_only">Invite-only room</option>
@@ -3821,22 +4113,34 @@ function TaskModal({
   theme,
   profiles,
   task,
+  draftKey,
   onClose,
   onCreate,
 }: {
   theme: 'light' | 'dark';
   profiles: AppProfile[];
   task?: AppTask;
+  draftKey: string;
   onClose: () => void;
   onCreate: (input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string }) => Promise<void>;
 }) {
-  const [title, setTitle] = useState(task?.title ?? '');
-  const [description, setDescription] = useState(task?.description ?? '');
-  const [projectName, setProjectName] = useState(task?.project_name ?? '');
-  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? 'medium');
-  const [tags, setTags] = useState((task?.tags ?? []).join(', '));
-  const [assigneeId, setAssigneeId] = useState(task?.assignee_id ?? '');
-  const [dueAt, setDueAt] = useState(task?.due_at ? task.due_at.slice(0, 10) : '');
+  const initialDraft = useMemo(() => ({
+    title: task?.title ?? '',
+    description: task?.description ?? '',
+    projectName: task?.project_name ?? '',
+    priority: task?.priority ?? ('medium' as TaskPriority),
+    tags: (task?.tags ?? []).join(', '),
+    assigneeId: task?.assignee_id ?? '',
+    dueAt: task?.due_at ? task.due_at.slice(0, 10) : '',
+  }), [task?.assignee_id, task?.description, task?.due_at, task?.priority, task?.project_name, task?.tags, task?.title]);
+  const [draft, setDraft, clearDraft] = usePersistentDraft(draftKey, initialDraft);
+  const title = draft.title;
+  const description = draft.description;
+  const projectName = draft.projectName;
+  const priority = draft.priority;
+  const tags = draft.tags;
+  const assigneeId = draft.assigneeId;
+  const dueAt = draft.dueAt;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -3851,6 +4155,7 @@ function TaskModal({
           setError('');
           try {
             await onCreate({ title: title.trim(), description: description.trim(), projectName: projectName.trim(), priority, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8), assigneeId, dueAt });
+            clearDraft();
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -3860,21 +4165,21 @@ function TaskModal({
       >
         <label className="grid gap-2 text-sm font-semibold">
           Task title
-          <input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+          <input value={title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           Description
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} className={cn('h-28 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
+          <textarea value={description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} className={cn('h-28 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
         </label>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="grid gap-2 text-sm font-semibold">Project<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Website redesign" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
-          <label className="grid gap-2 text-sm font-semibold">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+          <label className="grid gap-2 text-sm font-semibold">Project<input value={projectName} onChange={(event) => setDraft((current) => ({ ...current, projectName: event.target.value }))} placeholder="e.g. Website redesign" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+          <label className="grid gap-2 text-sm font-semibold">Priority<select value={priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
         </div>
-        <label className="grid gap-2 text-sm font-semibold">Tags<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="design, onboarding, client" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /><span className={cn('text-xs font-normal', muted(theme))}>Separate tags with commas.</span></label>
+        <label className="grid gap-2 text-sm font-semibold">Tags<input value={tags} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))} placeholder="design, onboarding, client" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /><span className={cn('text-xs font-normal', muted(theme))}>Separate tags with commas.</span></label>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm font-semibold">
             Assignee
-            <select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
+            <select value={assigneeId} onChange={(event) => setDraft((current) => ({ ...current, assigneeId: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
               <option value="">Unassigned</option>
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
@@ -3885,7 +4190,7 @@ function TaskModal({
           </label>
           <label className="grid gap-2 text-sm font-semibold">
             Due date
-            <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            <input type="date" value={dueAt} onChange={(event) => setDraft((current) => ({ ...current, dueAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
           </label>
         </div>
         <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
@@ -3984,6 +4289,8 @@ function SettingsModal({
   ownerEmail,
   premiumEmail,
   businessModules,
+  notificationPreferences,
+  onNotificationPreferencesChange,
   onBusinessModulesChange,
   onUpgrade,
   onClose,
@@ -4005,6 +4312,8 @@ function SettingsModal({
   ownerEmail: string;
   premiumEmail: boolean;
   businessModules: BusinessModules;
+  notificationPreferences: NotificationPreferences;
+  onNotificationPreferencesChange: (preferences: NotificationPreferences) => void;
   onBusinessModulesChange: (modules: BusinessModules) => Promise<void>;
   onUpgrade: () => void;
   onClose: () => void;
@@ -4037,6 +4346,7 @@ function SettingsModal({
     profile: 'Profile',
     settings: 'Settings',
     subscription: 'Subscription',
+    notifications: 'Notifications',
     help: 'Help center',
     about: 'About TriCord',
     report: 'Report a problem',
@@ -4060,6 +4370,13 @@ function SettingsModal({
   useEffect(() => {
     if (section === 'profile') void loadEmailAccounts();
   }, [loadEmailAccounts, section]);
+
+  const updateNotificationPreference = (key: keyof NotificationPreferences, value: boolean) => {
+    if (key === 'desktop' && value && 'Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+    onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
+  };
 
   const setDefaultEmailAccount = async (accountId: string) => {
     if (!supabase) return;
@@ -4268,6 +4585,26 @@ function SettingsModal({
           </div>
         </section>}
 
+        {section === 'notifications' && <section className={cn('rounded-lg border p-4', surface(theme))}>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Bell className="h-4 w-4" /></div>
+            <div>
+              <p className="font-bold">Notification preferences</p>
+              <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Choose how TriCord alerts you about important Hub activity on this browser.</p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3">
+            <NotificationToggle theme={theme} title="Desktop notifications" body="Show system notifications when new activity arrives while TriCord is in the background." checked={notificationPreferences.desktop} onChange={(checked) => updateNotificationPreference('desktop', checked)} />
+            <NotificationToggle theme={theme} title="Sound alerts" body="Play a short sound for new background activity." checked={notificationPreferences.sound} onChange={(checked) => updateNotificationPreference('sound', checked)} />
+            <NotificationToggle theme={theme} title="Browser tab badge" body="Show unread counts in the browser title and favicon." checked={notificationPreferences.tabBadges} onChange={(checked) => updateNotificationPreference('tabBadges', checked)} />
+            <NotificationToggle theme={theme} title="Mentions" body="Count messages that mention your name or email address." checked={notificationPreferences.mentions} onChange={(checked) => updateNotificationPreference('mentions', checked)} />
+            <NotificationToggle theme={theme} title="Direct messages and replies" body="Count new discussion replies from other Hub members." checked={notificationPreferences.directMessages} onChange={(checked) => updateNotificationPreference('directMessages', checked)} />
+            <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => updateNotificationPreference('taskAssignments', checked)} />
+            <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => updateNotificationPreference('announcements', checked)} />
+            <NotificationToggle theme={theme} title="Email notifications" body="Reserve email notifications for important updates when email delivery is enabled for your Hub." checked={notificationPreferences.email} onChange={(checked) => updateNotificationPreference('email', checked)} />
+          </div>
+        </section>}
+
         {section === 'settings' && (
           <div className="grid gap-3">
             <section className={cn('rounded-lg border p-4', surface(theme))}>
@@ -4288,7 +4625,7 @@ function SettingsModal({
               <section className={cn('rounded-lg border p-4', surface(theme))}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub Settings · Business Modules</p>
+                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub Settings · Workforce</p>
                     <p className={cn('mt-2 text-sm leading-6', muted(theme))}>These are Hub-level settings. Optional recordkeeping modules stay off until an Owner enables them for this Hub.</p>
                   </div>
                   <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
@@ -4357,16 +4694,16 @@ function SettingsModal({
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />
             <HelpTopic title="Tasks" body="Plan work with Board, List, and Calendar views. Add assignees, priorities, due dates, project names, statuses, and archive completed or canceled work." theme={theme} />
             <HelpTopic title="Knowledge base" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting notes, and SOPs. Everyone except Guests can read knowledge articles; Owners and permitted Admins can manage them." theme={theme} />
-            <HelpTopic title="Attendance Tracking" body="Optional Business Module. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
-            <HelpTopic title="Employee Records" body="Optional Business Module. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
-            <HelpTopic title="Payroll Preparation" body="Optional Business Module. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
-            <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled Business Module records from one operational dashboard." theme={theme} />
+            <HelpTopic title="Attendance Tracking" body="Optional workforce tools. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
+            <HelpTopic title="Employee Records" body="Optional workforce tools. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
+            <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
+            <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
             <HelpTopic title="Email features" body="Plus and Pro Hubs can forward emails into a Room address so the message becomes a focused post, then send outbound email from a discussion with #recipient@example.com followed by the message. Use cc: for copies. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage paid plans and billable seats through Stripe Checkout or the billing portal. Promo codes, taxes, renewal terms, and prorations are controlled at checkout or in Stripe." theme={theme} />
-            <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Business Modules, Help, reporting a problem, and logout." theme={theme} />
+            <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Workforce, Help, reporting a problem, and logout." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl plus Backslash on Windows or Linux, or Command plus Backslash on macOS, to hide or show the discussion panel." theme={theme} />
             <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white lg:col-span-3"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
@@ -4823,6 +5160,18 @@ function ConnectedEmailAccountsSection({ accounts, loading, notice, theme, fallb
 function StatusBadge({ label, tone }: { label: string; tone: 'accent' | 'success' | 'neutral' }) {
   const className = tone === 'success' ? 'bg-[#DCFCE7] text-[#166534]' : tone === 'accent' ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : 'bg-black/5 text-current';
   return <span className={cn('inline-flex rounded-full px-2.5 py-1 text-xs font-semibold', className)}>{label}</span>;
+}
+
+function NotificationToggle({ theme, title, body, checked, onChange }: { theme: 'light' | 'dark'; title: string; body: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className={cn('flex items-start justify-between gap-4 rounded-lg border p-3', subtleButton(theme))}>
+      <span className="min-w-0">
+        <span className="block text-sm font-bold">{title}</span>
+        <span className={cn('mt-1 block text-xs leading-5', muted(theme))}>{body}</span>
+      </span>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent-strong)]" />
+    </label>
+  );
 }
 
 function HelpTopic({ title, body, theme }: { title: string; body: string; theme: 'light' | 'dark' }) {

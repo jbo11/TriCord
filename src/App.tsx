@@ -437,6 +437,7 @@ export default function App() {
   const [selectedEmailAccountId, setSelectedEmailAccountId] = useState('');
   const [selectedPostId, setSelectedPostId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [notice, setNotice] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
@@ -487,7 +488,8 @@ export default function App() {
   const canManageAdmin = currentRole === 'owner' || canManageMembers || canManageRooms || canManageKnowledge || hasCapability('view_audit');
   const canModerateContent = currentRole === 'owner' || currentRole === 'admin';
   const showThreadPanel = chatOpen;
-  const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
+  const selectedPost = posts.find((post) => post.id === selectedPostId && (activeSpaceId === 'all' || post.space_id === activeSpaceId))
+    ?? posts.find((post) => post.state !== 'archived' && (activeSpaceId === 'all' || post.space_id === activeSpaceId));
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
   const selectedPostRoom = selectedPost ? spaces.find((space) => space.id === selectedPost.space_id) : undefined;
   const fallbackSenderAddress = selectedPostRoom ? getRoomForwardingAddress(selectedPostRoom) : selectedWorkspace ? `${slugify(selectedWorkspace.name) || 'room'}@${INBOUND_EMAIL_DOMAIN}` : `room@${INBOUND_EMAIL_DOMAIN}`;
@@ -737,6 +739,35 @@ export default function App() {
       return new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime();
     });
   }, [posts, query, session?.user.id, sort]);
+
+  const getMostRecentPostForSpace = useCallback((spaceId: string) => {
+    const candidates = posts.filter((post) => {
+      if (post.state === 'archived') return false;
+      return spaceId === 'all' || post.space_id === spaceId;
+    });
+
+    return [...candidates].sort((a, b) => new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime())[0];
+  }, [posts]);
+
+  const handleSpaceChange = useCallback((spaceId: string) => {
+    const wasOnFeed = view === 'feed';
+    const nextPost = getMostRecentPostForSpace(spaceId);
+
+    setActiveSpaceId(spaceId);
+    setView('feed');
+    setSort('active');
+    setSelectedPostId(nextPost?.id ?? '');
+    setChatOpen(wasOnFeed);
+    setSidebarOpen(false);
+  }, [getMostRecentPostForSpace, view]);
+
+  useEffect(() => {
+    if (view !== 'feed') return;
+    const currentPost = selectedPostId ? posts.find((post) => post.id === selectedPostId) : undefined;
+    if (currentPost && (activeSpaceId === 'all' || currentPost.space_id === activeSpaceId)) return;
+    const nextPost = getMostRecentPostForSpace(activeSpaceId);
+    setSelectedPostId(nextPost?.id ?? '');
+  }, [activeSpaceId, getMostRecentPostForSpace, posts, selectedPostId, view]);
 
   const loadWorkspaceData = useCallback(async (targetWorkspaceId: string, silent = false) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -1172,6 +1203,10 @@ export default function App() {
     }
   }, [businessModules, capabilities, currentRole, view]);
 
+  useEffect(() => {
+    if (authReady && !loading) setHasLoadedOnce(true);
+  }, [authReady, loading]);
+
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
     : visiblePosts.filter((post) => post.space_id === activeSpaceId);
@@ -1184,7 +1219,7 @@ export default function App() {
     return <SetupScreen theme={theme} setTheme={setTheme} />;
   }
 
-  if (!authReady || loading) {
+  if (!authReady || (loading && !hasLoadedOnce)) {
     return <LoadingScreen theme={theme} />;
   }
 
@@ -1238,7 +1273,7 @@ export default function App() {
       <div className="relative z-10 grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
         <Sidebar
           activeSpaceId={activeSpaceId}
-          onSpaceChange={setActiveSpaceId}
+          onSpaceChange={handleSpaceChange}
           spaces={spaces}
           roomPreferences={roomPreferences}
           theme={theme}
@@ -1938,7 +1973,7 @@ function Sidebar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
   const [draggedRoomId, setDraggedRoomId] = useState('');
-  const [workforceNavOpen, setWorkforceNavOpen] = useState(true);
+  const [workforceNavOpen, setWorkforceNavOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');

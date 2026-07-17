@@ -1415,7 +1415,7 @@ export default function App() {
 
               {view === 'feed' && (
                 <>
-                  <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length} theme={theme} />
+                  <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length + 1} theme={theme} />
                   <SortBar sort={sort} setSort={setSort} theme={theme} />
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area md:mt-4">
                     {currentSpacePosts.length > 0 ? (
@@ -2605,7 +2605,7 @@ function ThreadPanel({
 
   useEffect(() => {
     if (!error) return;
-    const timeoutId = window.setTimeout(() => setError(''), 20000);
+    const timeoutId = window.setTimeout(() => setError(''), 10000);
     return () => window.clearTimeout(timeoutId);
   }, [error]);
 
@@ -3012,7 +3012,7 @@ function ThreadPanel({
           }}
           onBlur={() => window.setTimeout(() => setMentionMatch(null), 120)}
           placeholder="Reply to this post"
-          className={cn('h-24 w-full resize-none rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none', subtleButton(theme))}
+          className={cn('min-h-24 max-h-[40dvh] w-full resize-y overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
         />
         {!editingComment && (files.length > 0 || externalAttachments.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -3796,13 +3796,13 @@ function AdminView({
   const canManagePeople = currentRole === 'owner' || Boolean(currentCapabilities?.manage_members);
   const canManageRoomAccess = currentRole === 'owner' || Boolean(currentCapabilities?.manage_members || currentCapabilities?.manage_rooms);
   const capabilityOptions: { key: keyof Omit<WorkspaceCapabilities, 'workspace_id' | 'user_id'>; label: string }[] = [
-    { key: 'manage_members', label: 'People and roles' },
+    { key: 'manage_members', label: 'People and Roles' },
     { key: 'manage_rooms', label: 'Rooms' },
     { key: 'manage_knowledge', label: 'Knowledge' },
-    ...(businessModules.employee_records ? [{ key: 'manage_hr' as const, label: 'Employee records' }, { key: 'approve_leave' as const, label: 'Leave approvals' }] : []),
-    ...(businessModules.attendance_tracking ? [{ key: 'manage_timekeeping' as const, label: 'Attendance settings' }, { key: 'correct_attendance' as const, label: 'Attendance corrections' }] : []),
-    ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll preparation' }, { key: 'approve_payroll' as const, label: 'Approve preparation drafts' }] : []),
-    ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Attendance reports' }] : []),
+    ...(businessModules.employee_records ? [{ key: 'manage_hr' as const, label: 'Employee Records' }, { key: 'approve_leave' as const, label: 'Leave Approvals' }] : []),
+    ...(businessModules.attendance_tracking ? [{ key: 'manage_timekeeping' as const, label: 'Attendance Settings' }, { key: 'correct_attendance' as const, label: 'Attendance Corrections' }] : []),
+    ...(businessModules.payroll_preparation ? [{ key: 'manage_payroll' as const, label: 'Payroll Preparation' }, { key: 'approve_payroll' as const, label: 'Approve Preparation Drafts' }] : []),
+    ...((businessModules.attendance_tracking || businessModules.employee_records || businessModules.payroll_preparation) ? [{ key: 'view_reports' as const, label: 'Attendance Reports' }] : []),
     { key: 'view_audit', label: 'Audit history' },
   ];
   const groups: { title: string; roles: WorkspaceRole[] }[] = [
@@ -4276,17 +4276,17 @@ function RoomEmailForwardingModal({ theme, room, premiumEmail, onUpgrade, onClos
   };
 
   return (
-    <ModalShell theme={theme} title="Email integration" onClose={onClose}>
+    <ModalShell theme={theme} title="Room Email" onClose={onClose}>
       <div className="grid gap-4">
-        {!premiumEmail && <div className="rounded-lg border border-[#FDBA74] bg-[#FFF7ED] p-4 text-sm text-[#9A3412]"><p className="font-bold">Email integration</p><p className="mt-1 leading-6">Connect Google Workspace/Gmail or Microsoft 365/Outlook to send email from discussions and keep customer context connected to the work.</p><button type="button" onClick={onUpgrade} className="mt-3 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Manage billing</button></div>}
+        {!premiumEmail && <div className="rounded-lg border border-[#FDBA74] bg-[#FFF7ED] p-4 text-sm text-[#9A3412]"><p className="font-bold">Room Email</p><p className="mt-1 leading-6">Room email routing is available on active Standard Hub subscriptions. Forward email into Rooms and send outbound email from discussions without connecting personal mailboxes.</p><button type="button" onClick={onUpgrade} className="mt-3 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Manage billing</button></div>}
         <div>
-          <p className="font-bold">Room email context for {room.name}</p>
+          <p className="font-bold">Room Email Context For {room.name}</p>
           <p className={cn('mt-1 text-sm leading-6', muted(theme))}>
-            Connect each user's Gmail, Google Workspace, Outlook, or Microsoft 365 mailbox from Settings. Outbound messages are sent from the connected user's own mailbox and stored with the discussion.
+            Use this Room address to forward email into TriCord. Outbound email can be sent from the discussion by adding recipient metadata lines at the top of your reply, and TriCord keeps the sent message attached to the same post.
           </p>
         </div>
         <div className={cn('rounded-lg border p-3', subtleButton(theme))}>
-          <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Legacy Room address</p>
+          <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Room Email Address</p>
           <div className="mt-2 flex items-center gap-2">
             <code className={cn('min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-black/5 px-3 py-2 text-sm font-semibold dark:bg-white/10', !premiumEmail && 'opacity-50')}>{premiumEmail ? address : 'Email integration requires an active subscription'}</code>
             <button type="button" disabled={!premiumEmail} onClick={() => void copyAddress()} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50', subtleButton(theme))}>
@@ -4297,15 +4297,15 @@ function RoomEmailForwardingModal({ theme, room, premiumEmail, onUpgrade, onClos
         </div>
         {!enabled && <p className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">Email integration is disabled for this Room.</p>}
         <div className={cn('rounded-lg border p-3 text-sm leading-6', surface(theme))}>
-          <p className="font-semibold">Send email from a discussion</p>
+          <p className="font-semibold">Send Email From A Discussion</p>
           <ol className={cn('mt-2 list-decimal space-y-1 pl-5', muted(theme))}>
-            <li>Connect your own Gmail or Microsoft 365 mailbox in Settings.</li>
-            <li>Write metadata lines at the top of your reply, such as <code>to:</code>, <code>cc:</code>, and <code>subj:</code>.</li>
-            <li>TriCord sends from your connected mailbox and keeps the sent email attached to the discussion.</li>
+            <li>Write recipient metadata lines at the top of your reply, such as <code>to:</code>, optional <code>cc:</code>, optional <code>bcc:</code>, and optional <code>subj:</code>.</li>
+            <li>TriCord sends the message through the Room email identity and keeps the sent email attached to the discussion.</li>
+            <li>Forward external email to the Room address when you want new customer or vendor context to become a TriCord post.</li>
           </ol>
         </div>
         <p className={cn('text-xs leading-5', muted(theme))}>
-          The @ symbol is reserved for tagging Hub members. Email recipients are declared with <code>to:</code>, optional <code>cc:</code>, and optional <code>subj:</code> lines.
+          The @ symbol is reserved for tagging Hub members. Email recipients are declared with <code>to:</code>, optional <code>cc:</code>, optional <code>bcc:</code>, and optional <code>subj:</code> lines.
         </p>
       </div>
     </ModalShell>
@@ -4936,11 +4936,11 @@ function SettingsModal({
             <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
-            <HelpTopic title="Email features" body="Connect Google Workspace/Gmail or Microsoft 365/Outlook, then send outbound email from a discussion using metadata lines such as to:, cc:, and subj:. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
+            <HelpTopic title="Email Features" body="Forward email into a Room using its Room email address, or send outbound email from a discussion with metadata lines such as to:, cc:, bcc:, and subj:. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage the Hub subscription, promo codes, taxes, renewal terms, and payment methods through Stripe Checkout or the billing portal. Standard Hub pricing includes up to 25 employees; larger teams should contact TriCord for a custom plan." theme={theme} />
-            <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Workforce, Help, reporting a problem, and logout." theme={theme} />
+            <HelpTopic title="Personalization And Settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Workforce, Help, reporting a problem, and logout." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl plus Backslash on Windows or Linux, or Command plus Backslash on macOS, to hide or show the discussion panel." theme={theme} />
             <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white lg:col-span-3"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
@@ -5167,7 +5167,7 @@ function OnboardingScreen({
               <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
               <label className="col-span-2 text-xs font-semibold">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
               <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
-              <label className="text-xs font-semibold">Preparation frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+              <label className="text-xs font-semibold">Preparation Frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
               <label className="col-span-2 text-xs font-semibold">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
             </div>
             <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
@@ -5225,7 +5225,7 @@ function HubSetupModal({ theme, email, onCreate, onClose }: { theme: 'light' | '
           <label className="text-xs font-semibold">Currency<input value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value.toUpperCase().slice(0, 3))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
           <label className="text-xs font-semibold sm:col-span-2">Time zone<input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))} /></label>
           <label className="text-xs font-semibold">Date format<select value={dateFormat} onChange={(event) => setDateFormat(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option>MM/DD/YYYY</option><option>DD/MM/YYYY</option><option>YYYY-MM-DD</option></select></label>
-          <label className="text-xs font-semibold">Preparation frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
+          <label className="text-xs font-semibold">Preparation Frequency<select value={payrollFrequency} onChange={(event) => setPayrollFrequency(event.target.value)} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value="weekly">Weekly</option><option value="biweekly">Bi-weekly</option><option value="semimonthly">Semi-monthly</option><option value="monthly">Monthly</option></select></label>
           <label className="text-xs font-semibold sm:col-span-2">First day of week<select value={firstDayOfWeek} onChange={(event) => setFirstDayOfWeek(Number(event.target.value))} className={cn('mt-1 h-11 w-full rounded-lg border bg-transparent px-3', subtleButton(theme))}><option value={0}>Sunday</option><option value={1}>Monday</option><option value={6}>Saturday</option></select></label>
         </div>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}

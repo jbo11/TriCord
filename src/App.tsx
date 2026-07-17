@@ -155,8 +155,12 @@ const accentPalettes: Record<AccentColor, { label: string; accent: string; stron
 };
 
 type BillingInterval = 'monthly' | 'yearly';
-type PaidPlan = 'plus' | 'pro';
-type LaunchPlan = 'free' | PaidPlan;
+type PaidPlan = 'tricord';
+type LaunchPlan = 'tricord';
+
+const STANDARD_HUB_EMPLOYEE_LIMIT = 25;
+const STANDARD_HUB_MONTHLY_PRICE = 29;
+const STANDARD_HUB_YEARLY_PRICE = 290;
 
 const launchPlans: Array<{
   id: LaunchPlan;
@@ -166,9 +170,14 @@ const launchPlans: Array<{
   description: string;
   highlights: string[];
 }> = [
-  { id: 'free', name: 'Free', monthly: '$0', annual: '$0', description: 'For new teams organizing work in one Hub.', highlights: ['1 owned Hub', '10 members included', '10 Rooms', '90 days message history', '1 GB storage'] },
-  { id: 'plus', name: 'Plus', monthly: '$9', annual: '$7', description: 'For small teams that need more collaboration capacity and optional workforce tools.', highlights: ['5 owned Hubs', '100 members included', 'Unlimited Rooms', 'Unlimited history', '100 GB storage'] },
-  { id: 'pro', name: 'Pro', monthly: '$18', annual: '$15', description: 'For growing teams that need advanced controls and visibility.', highlights: ['Unlimited Hubs', 'Unlimited fair-use members', '1 TB storage', 'Advanced controls', '1 year audit history'] },
+  {
+    id: 'tricord',
+    name: 'Standard Hub',
+    monthly: '$29/month',
+    annual: '$290/year',
+    description: 'One complete Hub for teams up to 25 employees, with collaboration, rooms, tasks, CRM, recruitment, knowledge, attendance, storage, and mailbox capacity included.',
+    highlights: ['Up to 25 employees', '25 mailboxes; shared mailboxes are not included', '25 GB Hub storage', 'Unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance', 'Contact us for teams with more than 25 employees'],
+  },
 ];
 
 interface ForwardableMessage {
@@ -484,9 +493,10 @@ export default function App() {
   const canManageRooms = hasCapability('manage_rooms');
   const canManageKnowledge = hasCapability('manage_knowledge');
   const savedBusinessModules = useMemo(() => getBusinessModules(selectedWorkspace), [selectedWorkspace]);
-  const currentPlan = normalizePlan(selectedWorkspace?.plan ?? 'free');
-  const premiumFeatures = currentPlan === 'plus' || currentPlan === 'pro';
-  const businessModules = premiumFeatures ? savedBusinessModules : DEFAULT_BUSINESS_MODULES;
+  const subscriptionState = getWorkspaceSubscriptionState(selectedWorkspace);
+  const workspaceReadOnly = subscriptionState.status === 'expired' || subscriptionState.status === 'cancelled';
+  const premiumFeatures = true;
+  const businessModules = savedBusinessModules;
   const canViewTimekeeping = businessModules.attendance_tracking && canOpenView('timekeeping', currentRole, capabilities);
   const canViewHr = businessModules.employee_records && canOpenView('hr', currentRole, capabilities);
   const canViewPayroll = businessModules.payroll_preparation && canOpenView('payroll', currentRole, capabilities);
@@ -565,12 +575,12 @@ export default function App() {
     }
   }, [workspaceId]);
 
-  const startCheckout = useCallback(async (plan: PaidPlan, interval: BillingInterval) => {
+  const startCheckout = useCallback(async (_plan: PaidPlan, interval: BillingInterval) => {
     if (!supabase || !workspaceId) return;
     try {
       setNotice('');
       setBillingError('');
-      const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: { workspaceId, plan, interval } });
+      const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: { workspaceId, plan: 'tricord', interval } });
       if (error) throw new Error(await getFunctionErrorMessage(error));
       const url = (data as { url?: string } | null)?.url;
       if (!url) throw new Error('Checkout did not return a redirect URL.');
@@ -588,13 +598,12 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase || !workspaceId || !selectedWorkspace || currentRole === 'guest') return;
-    const plan = normalizePlan(selectedWorkspace.plan);
-    if (plan === 'free') return;
+    if (selectedWorkspace.subscription_status !== 'active') return;
     const roleSignature = memberships
       .map((membership) => `${membership.id}:${membership.role}`)
       .sort()
       .join('|');
-    const syncKey = `${workspaceId}:${plan}:${roleSignature}`;
+    const syncKey = `${workspaceId}:active:${roleSignature}`;
     if (!roleSignature || billingSeatSyncKeyRef.current === syncKey) return;
     billingSeatSyncKeyRef.current = syncKey;
     void supabase.functions.invoke('sync-billing-seats', { body: { workspaceId } }).then(({ error }) => {
@@ -661,10 +670,12 @@ export default function App() {
     setLastSeenActivityAt(initialSeenAt);
   }, [unreadSeenKey]);
 
+  const isViewingActiveDiscussion = view === 'feed' && chatOpen && Boolean(selectedPostId);
+
   useEffect(() => {
     if (!unreadSeenKey) return;
     const markVisible = () => {
-      if (document.visibilityState === 'visible') markWorkspaceActivitySeen();
+      if (document.visibilityState === 'visible' && isViewingActiveDiscussion) markWorkspaceActivitySeen();
     };
     window.addEventListener('focus', markVisible);
     document.addEventListener('visibilitychange', markVisible);
@@ -672,7 +683,12 @@ export default function App() {
       window.removeEventListener('focus', markVisible);
       document.removeEventListener('visibilitychange', markVisible);
     };
-  }, [markWorkspaceActivitySeen, unreadSeenKey]);
+  }, [isViewingActiveDiscussion, markWorkspaceActivitySeen, unreadSeenKey]);
+
+  useEffect(() => {
+    if (!unreadSeenKey || !isViewingActiveDiscussion || document.visibilityState !== 'visible') return;
+    markWorkspaceActivitySeen();
+  }, [comments.length, isViewingActiveDiscussion, markWorkspaceActivitySeen, posts.length, tasks.length, unreadSeenKey]);
 
   useEffect(() => {
     if (marketingHome) return;
@@ -890,7 +906,7 @@ export default function App() {
     }
     const { data, error } = await supabase
       .from('user_email_accounts')
-      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, smtp_host, smtp_port, smtp_username, smtp_encryption, is_default, is_connected, last_error, created_at, updated_at')
+      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, provider_account_id, scopes, last_sync_at, sync_cursor, revoked_at, is_default, is_connected, last_error, created_at, updated_at')
       .eq('workspace_id', workspaceId)
       .eq('user_id', session.user.id)
       .eq('is_connected', true)
@@ -1294,7 +1310,7 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           profile={currentProfile}
           email={session.user.email ?? ''}
-          plan={selectedWorkspace?.plan ?? 'free'}
+          plan={formatSubscriptionStatusLabel(selectedWorkspace)}
           onClose={() => setSidebarOpen(false)}
           onCreateSpace={() => setSpaceModalOpen(true)}
           onRenameSpace={setRenamingSpace}
@@ -1584,9 +1600,8 @@ export default function App() {
                 const emailCommand = parseEmailSendCommand(body);
                 let commentBody = body;
                 if (emailCommand) {
-                  if (!premiumFeatures) throw new Error('Incoming and outgoing email is available on Plus and Pro plans.');
                   const { error } = await supabase.functions.invoke('send-room-email', {
-                    body: { workspaceId, postId: selectedPost.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: `Re: ${selectedPost.title}`, providerAccountId: providerAccountId === 'room' ? undefined : providerAccountId },
+                    body: { workspaceId, postId: selectedPost.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}`, providerAccountId: providerAccountId === 'room' ? undefined : providerAccountId },
                   });
                   if (error) throw new Error(await getFunctionErrorMessage(error));
                   commentBody = `Email sent to ${emailCommand.to}${emailCommand.cc.length ? ` (cc: ${emailCommand.cc.join(', ')})` : ''}${emailCommand.bcc.length ? ` (bcc: ${emailCommand.bcc.join(', ')})` : ''}\n\n${emailCommand.message}`;
@@ -1770,7 +1785,7 @@ export default function App() {
       {billingModalOpen && selectedWorkspace && (
         <BillingPlansModal
           theme={theme}
-          currentPlan={selectedWorkspace.plan}
+          currentPlan={selectedWorkspace.subscription_status ?? selectedWorkspace.plan ?? 'trial'}
           billableSeatCount={billableSeatCount}
           error={billingError}
           canManageBilling={currentRole === 'owner'}
@@ -1818,7 +1833,6 @@ export default function App() {
           onNotificationPreferencesChange={setNotificationPreferences}
           onBusinessModulesChange={async (nextModules) => {
             if (!selectedWorkspace || currentRole !== 'owner') return;
-            if (!premiumFeatures) throw new Error('Workforce tools are available on Plus and Pro plans.');
             const changedEntry = BUSINESS_MODULE_CONFIGS.find((module) => !getBusinessModules(selectedWorkspace)[module.key] && nextModules[module.key]);
             if (changedEntry && !hasAcknowledgedBusinessModule(selectedWorkspace, changedEntry.key)) {
               setBusinessModuleDisclosure({ module: changedEntry, nextModules });
@@ -1991,9 +2005,8 @@ function Sidebar({
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
   const roomCompactStorageKey = `${ROOM_COMPACT_STORAGE_KEY}:${profile?.id ?? email}:${workspaceId}`;
-  const planKey = plan.toLowerCase();
-  const planLabel = planKey.charAt(0).toUpperCase() + planKey.slice(1);
-  const ownerCanUpgrade = currentRole === 'owner' && ['free', 'plus'].includes(planKey);
+  const planLabel = plan;
+  const ownerCanManageBilling = currentRole === 'owner';
   const orderedSpaces = useMemo(() => [...spaces].sort((a, b) => {
     const aPreference = roomPreferences[a.id];
     const bPreference = roomPreferences[b.id];
@@ -2180,7 +2193,7 @@ function Sidebar({
                     </button>
                     {menuOpen && (
                       <div className={cn('absolute right-2 z-[65] w-48 rounded-lg border p-1.5 text-sm shadow-2xl', menuOpensUp ? 'bottom-10' : 'top-10', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
-                        <RoomMenuButton icon={Mail} label={premiumFeatures ? 'Email forwarding' : 'Email forwarding (Plus)'} onClick={() => { setRoomMenuId(''); onOpenRoomEmail(space); }} />
+                        <RoomMenuButton icon={Mail} label="Email integration" onClick={() => { setRoomMenuId(''); onOpenRoomEmail(space); }} />
                         {canManageRoom && <RoomMenuButton icon={Pencil} label="Rename" onClick={() => { setRoomMenuId(''); onRenameSpace(space); }} />}
                         <RoomMenuButton icon={GripVertical} label={reorderMode ? 'Finish moving' : 'Move'} onClick={() => { setReorderMode((active) => !active); setRoomMenuId(''); }} />
                         <RoomMenuButton icon={ArrowUpDown} label="Sort" trailing={ChevronRight} active={sortMenuOpen} onClick={() => setSortMenuOpen((open) => !open)} />
@@ -2217,8 +2230,8 @@ function Sidebar({
                 </div>
               </div>
               <div className="mt-2 grid gap-1">
-                {ownerCanUpgrade && <AccountMenuButton icon={CreditCard} label="Upgrade Plan" onClick={() => { setAccountMenuOpen(false); onOpenBilling(); }} />}
-                {ownerCanUpgrade && <div className="my-1 border-t border-white/10" />}
+                {ownerCanManageBilling && <AccountMenuButton icon={CreditCard} label="Manage billing" onClick={() => { setAccountMenuOpen(false); onOpenBilling(); }} />}
+                {ownerCanManageBilling && <div className="my-1 border-t border-white/10" />}
                 <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#AAA4B3]">Hubs</p>
                 {workspaces.map((workspace) => (
                   <button
@@ -2900,7 +2913,7 @@ function ThreadPanel({
           }}
         />
         {lockedEmailCommand && (
-          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email from discussions is available on Plus and Pro plans.</p>
+          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Connect Google Workspace/Gmail or Microsoft 365/Outlook to send email from discussions.</p>
         )}
         {emailCommandPreview && (
           <div className={cn('mb-2 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
@@ -2956,12 +2969,25 @@ function ThreadPanel({
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              if (event.altKey) {
+                event.preventDefault();
+                const textarea = event.currentTarget;
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const nextReply = reply.slice(0, start) + '\n' + reply.slice(end);
+                setReply(nextReply);
+                setMentionMatch(null);
+                window.requestAnimationFrame(() => {
+                  textarea.selectionStart = start + 1;
+                  textarea.selectionEnd = start + 1;
+                });
+                return;
+              }
               if (mentionOptions.length > 0) {
                 event.preventDefault();
                 insertMention(mentionOptions[Math.min(mentionActiveIndex, mentionOptions.length - 1)]);
                 return;
               }
-              if (event.altKey) return;
               event.preventDefault();
               event.currentTarget.form?.requestSubmit();
               return;
@@ -3238,20 +3264,39 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
 }
 
 function ThreadWidthPresets({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const options = [
+    { label: 'Wide', width: 80, detail: 'More room for discussion' },
+    { label: 'Balanced', width: 50, detail: 'Equal workspace and discussion' },
+    { label: 'Compact', width: 20, detail: 'More room for the workspace' },
+  ];
+  const active = options.reduce((closest, option) => Math.abs(option.width - width) < Math.abs(closest.width - width) ? option : closest, options[1]);
   return (
-    <div className="hidden items-center gap-1 xl:flex" aria-label="Discussion pane width">
-      {[20, 50, 80].map((preset) => (
-        <button
-          key={preset}
-          type="button"
-          aria-label={`Set discussion pane to ${preset}%`}
-          title={`Set discussion pane to ${preset}%`}
-          onClick={() => onWidthChange(preset)}
-          className={cn('h-7 rounded-md border px-2 text-xs font-semibold transition', Math.round(width) === preset ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : subtleButton(theme))}
-        >
-          {preset}%
-        </button>
-      ))}
+    <div className="relative hidden xl:block">
+      <button
+        type="button"
+        aria-label="Discussion layout"
+        title="Discussion layout"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className={cn('inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold transition', subtleButton(theme))}
+      >
+        <LayoutGrid className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div className={cn('absolute right-0 top-full z-[95] mt-2 w-56 overflow-hidden rounded-lg border p-1 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-white')}>
+          {options.map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => { onWidthChange(option.width); setOpen(false); }}
+              className={cn('flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition hover:bg-[var(--accent-soft)]', Math.round(width) === option.width && 'bg-[var(--accent-soft)] text-[var(--accent-strong)]')}
+            >
+              <span><strong className="block">{option.label}</strong><span className={cn('text-xs', muted(theme))}>{option.detail}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3671,7 +3716,7 @@ function KnowledgeView({
     if (!normalizedQuery) return true;
     return `${article.title} ${article.summary ?? ''} ${article.content}`.toLowerCase().includes(normalizedQuery);
   });
-  const userGuide = { id: 'tricord-user-guide', title: 'TriCord User Guide', summary: 'Complete PDF guide for all Free, Plus, and Pro users.', category: 'documentation' as KnowledgeCategory };
+  const userGuide = { id: 'tricord-user-guide', title: 'TriCord User Guide', summary: 'Complete PDF guide for TriCord trial and subscribed Hubs.', category: 'documentation' as KnowledgeCategory };
   const selectedArticle = visibleArticles.find((article) => article.id === selectedArticleId) ?? visibleArticles[0];
 
   return (
@@ -4231,36 +4276,36 @@ function RoomEmailForwardingModal({ theme, room, premiumEmail, onUpgrade, onClos
   };
 
   return (
-    <ModalShell theme={theme} title="Email forwarding" onClose={onClose}>
+    <ModalShell theme={theme} title="Email integration" onClose={onClose}>
       <div className="grid gap-4">
-        {!premiumEmail && <div className="rounded-lg border border-[#FDBA74] bg-[#FFF7ED] p-4 text-sm text-[#9A3412]"><p className="font-bold">Available on Plus and Pro</p><p className="mt-1 leading-6">Incoming and outgoing email keeps forwarded mail connected to Room discussions. Upgrade this Hub to enable Room addresses and email sending.</p><button type="button" onClick={onUpgrade} className="mt-3 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Upgrade plan</button></div>}
+        {!premiumEmail && <div className="rounded-lg border border-[#FDBA74] bg-[#FFF7ED] p-4 text-sm text-[#9A3412]"><p className="font-bold">Email integration</p><p className="mt-1 leading-6">Connect Google Workspace/Gmail or Microsoft 365/Outlook to send email from discussions and keep customer context connected to the work.</p><button type="button" onClick={onUpgrade} className="mt-3 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Manage billing</button></div>}
         <div>
-          <p className="font-bold">Forward emails into {room.name}</p>
+          <p className="font-bold">Room email context for {room.name}</p>
           <p className={cn('mt-1 text-sm leading-6', muted(theme))}>
-            Forward an email to this Room address to create a TriCord discussion card with the email subject, sender, body preview, and attachments once inbound email routing is connected.
+            Connect each user's Gmail, Google Workspace, Outlook, or Microsoft 365 mailbox from Settings. Outbound messages are sent from the connected user's own mailbox and stored with the discussion.
           </p>
         </div>
         <div className={cn('rounded-lg border p-3', subtleButton(theme))}>
-          <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Room email address</p>
+          <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Legacy Room address</p>
           <div className="mt-2 flex items-center gap-2">
-            <code className={cn('min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-black/5 px-3 py-2 text-sm font-semibold dark:bg-white/10', !premiumEmail && 'opacity-50')}>{premiumEmail ? address : 'Upgrade to enable Room email'}</code>
+            <code className={cn('min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-black/5 px-3 py-2 text-sm font-semibold dark:bg-white/10', !premiumEmail && 'opacity-50')}>{premiumEmail ? address : 'Email integration requires an active subscription'}</code>
             <button type="button" disabled={!premiumEmail} onClick={() => void copyAddress()} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50', subtleButton(theme))}>
               <Copy className="h-4 w-4" />
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
         </div>
-        {!enabled && <p className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">Email forwarding is disabled for this Room.</p>}
+        {!enabled && <p className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">Email integration is disabled for this Room.</p>}
         <div className={cn('rounded-lg border p-3 text-sm leading-6', surface(theme))}>
-          <p className="font-semibold">How it will work</p>
+          <p className="font-semibold">Send email from a discussion</p>
           <ol className={cn('mt-2 list-decimal space-y-1 pl-5', muted(theme))}>
-            <li>Open Gmail, Outlook, or any email client.</li>
-            <li>Forward the email to the Room address above.</li>
-            <li>TriCord turns it into a Room post so the team can discuss and assign follow-up work.</li>
+            <li>Connect your own Gmail or Microsoft 365 mailbox in Settings.</li>
+            <li>Write metadata lines at the top of your reply, such as <code>to:</code>, <code>cc:</code>, and <code>subj:</code>.</li>
+            <li>TriCord sends from your connected mailbox and keeps the sent email attached to the discussion.</li>
           </ol>
         </div>
         <p className={cn('text-xs leading-5', muted(theme))}>
-          This release prepares the Room address and UI. To receive forwarded emails, connect an inbound email provider such as Resend, Mailgun, Postmark, or SendGrid to the TriCord inbound webhook.
+          The @ symbol is reserved for tagging Hub members. Email recipients are declared with <code>to:</code>, optional <code>cc:</code>, and optional <code>subj:</code> lines.
         </p>
       </div>
     </ModalShell>
@@ -4392,70 +4437,82 @@ function TaskModal({
 
 function BillingPlansModal({ theme, currentPlan, billableSeatCount, error, canManageBilling, onClose, onCheckout, onManageBilling }: { theme: 'light' | 'dark'; currentPlan: string; billableSeatCount: number; error: string; canManageBilling: boolean; onClose: () => void; onCheckout: (plan: PaidPlan, interval: BillingInterval) => Promise<void>; onManageBilling: () => Promise<void> }) {
   const [interval, setInterval] = useState<BillingInterval>('yearly');
-  const [submittingPlan, setSubmittingPlan] = useState<string>('');
-  const normalizedPlan = normalizePlan(currentPlan);
+  const [submitting, setSubmitting] = useState(false);
+  const status = currentPlan || 'trial';
+  const isActive = status === 'active';
+  const isExpired = status === 'expired' || status === 'cancelled';
+  const overIncludedEmployeeLimit = billableSeatCount > STANDARD_HUB_EMPLOYEE_LIMIT;
+  const price = interval === 'monthly' ? STANDARD_HUB_MONTHLY_PRICE : STANDARD_HUB_YEARLY_PRICE;
+  const priceLabel = interval === 'monthly' ? '/month' : '/year';
 
-  const choosePlan = async (plan: LaunchPlan) => {
-    if (!canManageBilling || plan === 'free') return;
-    setSubmittingPlan(plan);
+  const handlePrimary = async () => {
+    if (!canManageBilling) return;
+    if (isActive) {
+      setSubmitting(true);
+      try { await onManageBilling(); } finally { setSubmitting(false); }
+      return;
+    }
+    if (overIncludedEmployeeLimit) {
+      window.location.href = 'mailto:hello@tricord.cc?subject=TriCord%20custom%20plan&body=' + encodeURIComponent(`Hub employee count: ${billableSeatCount}
+
+Please tell us about your team size and custom plan needs.`);
+      return;
+    }
+    setSubmitting(true);
     try {
-      if (normalizedPlan === plan) await onManageBilling();
-      else await onCheckout(plan, interval);
+      await onCheckout('tricord', interval);
     } finally {
-      setSubmittingPlan('');
+      setSubmitting(false);
     }
   };
 
   return (
-    <ModalShell theme={theme} title="Upgrade plan" onClose={onClose} wide>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className={cn('text-sm leading-6', muted(theme))}>Choose the plan for this Hub. Billing belongs to the Hub, so changing plans will not affect other Hubs you belong to.</p>
-          <p className={cn('mt-2 text-sm font-semibold', muted(theme))}>Current billable seats: {billableSeatCount}. Owners, Admins, and Members count as paid seats on Plus and Pro; Guests are free.</p>
-          <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Promo codes can be entered in Stripe Checkout when choosing a paid plan.</p>
-          {!canManageBilling && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">Only the Hub Owner can start or manage billing.</p>}
-        </div>
-        <div className={cn('inline-flex rounded-lg border p-1', subtleButton(theme))}>
-          <button type="button" onClick={() => setInterval('monthly')} className={cn('h-9 rounded-md px-3 text-sm font-semibold', interval === 'monthly' ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>Monthly</button>
-          <button type="button" onClick={() => setInterval('yearly')} className={cn('h-9 rounded-md px-3 text-sm font-semibold', interval === 'yearly' ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>Yearly</button>
-        </div>
+    <ModalShell theme={theme} title="Subscription" onClose={onClose} wide>
+      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+        <section className={cn('rounded-xl border p-5', surface(theme))}>
+          <p className="text-lg font-bold">Standard Hub</p>
+          <p className={cn('mt-2 text-sm leading-6', muted(theme))}>
+            One flat subscription for a complete TriCord Hub. The Standard Hub includes up to {STANDARD_HUB_EMPLOYEE_LIMIT} employees, 25 mailboxes, 25 GB of storage, and unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance. Shared mailboxes are not included.
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {launchPlans[0].highlights.map((item) => (
+              <div key={item} className={cn('rounded-lg border px-3 py-3 text-sm font-semibold', subtleButton(theme))}>{item}</div>
+            ))}
+          </div>
+          <p className={cn('mt-5 text-xs leading-5', muted(theme))}>
+            Current employees: {billableSeatCount} of {STANDARD_HUB_EMPLOYEE_LIMIT} included. If this Hub needs more than {STANDARD_HUB_EMPLOYEE_LIMIT} employees, contact us for a custom plan. Promo codes can be entered in Stripe Checkout.
+          </p>
+        </section>
+        <section className={cn('flex flex-col rounded-xl border p-5', surface(theme))}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--accent-strong)]">Hub subscription</p>
+              <h3 className="mt-2 text-2xl font-black capitalize">{status.replace(/_/g, ' ')}</h3>
+            </div>
+            <StatusBadge label={isActive ? 'Active' : isExpired ? 'Action needed' : 'Trial'} tone={isActive ? 'success' : isExpired ? 'accent' : 'neutral'} />
+          </div>
+          <div className={cn('mt-6 inline-flex w-fit rounded-lg border p-1', subtleButton(theme))}>
+            <button type="button" onClick={() => setInterval('monthly')} className={cn('h-9 rounded-md px-3 text-sm font-semibold', interval === 'monthly' ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>Monthly</button>
+            <button type="button" onClick={() => setInterval('yearly')} className={cn('h-9 rounded-md px-3 text-sm font-semibold', interval === 'yearly' ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>Yearly</button>
+          </div>
+          <div className="mt-6">
+            <div className="flex items-end gap-2"><strong className="text-4xl font-black">${price}</strong><span className={cn('pb-1 text-sm font-semibold', muted(theme))}>{priceLabel}</span></div>
+            {interval === 'yearly' && <p className={cn('mt-1 text-sm', muted(theme))}>Two months free compared with monthly billing.</p>}
+          </div>
+          {overIncludedEmployeeLimit && !isActive && <div className="mt-4 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-sm font-semibold text-[#9A3412]">This Hub has more than {STANDARD_HUB_EMPLOYEE_LIMIT} employees. Please contact us for a custom plan.</div>}
+          {error && <div className="mt-4 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">{error}</div>}
+          {!canManageBilling && <p className="mt-4 text-sm font-semibold text-[#B91C1C]">Only the Hub Owner can manage billing.</p>}
+          <button
+            type="button"
+            disabled={!canManageBilling || submitting}
+            onClick={() => void handlePrimary()}
+            className="mt-auto inline-flex h-11 w-full items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)] disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {submitting ? 'Opening...' : isActive ? 'Manage billing' : overIncludedEmployeeLimit ? 'Contact us for custom plan' : 'Subscribe'}
+          </button>
+          <p className={cn('mt-4 text-xs leading-5', muted(theme))}>Stripe Checkout and Customer Portal handle payment details securely. TriCord never stores card numbers.</p>
+        </section>
       </div>
-      {error && <div className="mt-4 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">{error}</div>}
-      <div className="mt-6 grid items-stretch gap-4 lg:grid-cols-3">
-        {launchPlans.map((plan) => {
-          const current = normalizedPlan === plan.id;
-          const featured = plan.id === 'plus';
-          const price = interval === 'yearly' ? plan.annual : plan.monthly;
-          return (
-            <section key={plan.id} className={cn('flex h-full flex-col rounded-xl border p-5', featured ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/10' : '', surface(theme))}>
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-lg font-bold">{plan.name}</p>
-                  <p className={cn('mt-1 min-h-[4.5rem] text-sm leading-6', muted(theme))}>{plan.description}</p>
-                </div>
-                {current && <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-bold text-[var(--accent-strong)]">Current</span>}
-              </div>
-              <div className="mt-5 flex min-h-[3.5rem] items-end gap-1">
-                <span className="text-4xl font-black">{price}</span>
-                {plan.id !== 'free' && <span className={cn('pb-1 text-sm', muted(theme))}>/user/mo</span>}
-              </div>
-              {plan.id !== 'free' && interval === 'yearly' && <p className={cn('mt-1 text-xs', muted(theme))}>Billed annually.</p>}
-              <ul className="mt-5 flex-1 space-y-2 text-sm">
-                {plan.highlights.map((item) => <li key={item} className="flex gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-[var(--accent)]" /><span>{item}</span></li>)}
-              </ul>
-              <button
-                type="button"
-                disabled={!canManageBilling || plan.id === 'free' || submittingPlan === plan.id}
-                onClick={() => void choosePlan(plan.id)}
-                className={cn('mt-6 inline-flex h-11 w-full items-center justify-center rounded-lg px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-55', current && plan.id !== 'free' ? cn('border', subtleButton(theme)) : 'bg-[var(--accent)] text-[var(--accent-ink)]')}
-              >
-                {submittingPlan === plan.id ? 'Opening...' : current ? (plan.id === 'free' ? 'Current plan' : 'Manage billing') : plan.id === 'free' ? 'Included' : `Choose ${plan.name} for ${billableSeatCount} seat${billableSeatCount === 1 ? '' : 's'}`}
-              </button>
-            </section>
-          );
-        })}
-      </div>
-      <p className={cn('mt-5 text-xs leading-5', muted(theme))}>Stripe Checkout and Customer Portal handle payment details securely. TriCord never stores card numbers.</p>
     </ModalShell>
   );
 }
@@ -4543,7 +4600,7 @@ function SettingsModal({
     setEmailAccountsLoading(true);
     const { data, error } = await supabase
       .from('user_email_accounts')
-      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, smtp_host, smtp_port, smtp_username, smtp_encryption, is_default, is_connected, last_error, created_at, updated_at')
+      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, provider_account_id, scopes, last_sync_at, sync_cursor, revoked_at, is_default, is_connected, last_error, created_at, updated_at')
       .eq('workspace_id', workspace.id)
       .eq('user_id', profile.id)
       .order('is_default', { ascending: false })
@@ -4585,15 +4642,9 @@ function SettingsModal({
       ? 'gmail'
       : provider.toLowerCase().includes('microsoft') || provider.toLowerCase().includes('outlook')
         ? 'microsoft365'
-        : provider.toLowerCase().includes('smtp')
-          ? 'smtp'
-          : 'resend';
-    if (normalizedProvider === 'smtp') {
-      setEmailAccountNotice('Custom SMTP setup is reserved for the next provider form: host, port, username, password, encryption, and test email before saving.');
-      return;
-    }
-    if (normalizedProvider === 'resend') {
-      setEmailAccountNotice('TriCord Mail is available automatically as the Room email fallback.');
+        : '';
+    if (!normalizedProvider) {
+      setEmailAccountNotice('Choose Google Workspace/Gmail or Microsoft 365/Outlook to connect email.');
       return;
     }
     const { data, error } = await supabase.functions.invoke('email-oauth-start', { body: { workspaceId: workspace.id, provider: normalizedProvider } });
@@ -4799,7 +4850,7 @@ function SettingsModal({
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Plan</p>
-              <p className="mt-2 text-lg font-bold capitalize">{workspace?.plan ?? 'Free'}</p>
+              <p className="mt-2 text-lg font-bold">{formatSubscriptionStatusLabel(workspace)}</p>
               <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Your current TriCord account includes the core Hub, Room, feed, task, and knowledge features.</p>
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
@@ -4852,21 +4903,21 @@ function SettingsModal({
 
         {section === 'subscription' && (
           <section className={cn('rounded-lg border p-4', surface(theme))}>
-            <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Current subscription</p>
+            <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Subscription</p>
             <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p className="text-2xl font-bold capitalize">{workspace?.plan ?? 'Free'} Plan</p>
+                <p className="text-2xl font-bold capitalize">{formatSubscriptionStatusLabel(workspace)}</p>
                 <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Billing belongs to this Hub. Changing this subscription will not affect other Hubs you belong to.</p>
               </div>
               <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
             </div>
             <div className={cn('mt-5 rounded-lg border p-4', subtleButton(theme))}>
               <p className="font-bold">{workspace?.name ?? 'Current Hub'}</p>
-              <p className={cn('mt-1 text-sm', muted(theme))}>Use this area to upgrade, manage payment details, review invoices, or change billing through Stripe.</p>
+              <p className={cn('mt-1 text-sm', muted(theme))}>Use this area to subscribe after the trial, manage payment details, review invoices, or export Hub data.</p>
             </div>
             <button type="button" onClick={onUpgrade} className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">
               <CreditCard className="h-4 w-4" />
-              {(workspace?.plan ?? 'free') === 'free' ? 'Upgrade plan' : 'Manage subscription'}
+              {workspace?.subscription_status === 'active' ? 'Manage subscription' : 'Subscribe'}
             </button>
           </section>
         )}
@@ -4874,21 +4925,21 @@ function SettingsModal({
         {section === 'help' && (
           <div className="grid gap-4 lg:grid-cols-3">
             <section className={cn('rounded-lg border p-4 lg:col-span-3', surface(theme))}>
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete guide for Free, Plus, and Pro users.</p></div><div className="flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a></div></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">TriCord User Guide</p><p className={cn('mt-1 text-sm leading-6', muted(theme))}>Download the complete TriCord user guide.</p></div><div className="flex flex-wrap gap-2"><a href={USER_GUIDE_URL} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Open PDF</a></div></div>
             </section>
             <HelpTopic title="Active Feed and discussions" body="Create focused posts inside Rooms, keep replies attached to the original topic, add reactions, forward selected messages, archive outcomes, and reopen the side discussion panel from a post when needed." theme={theme} />
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />
             <HelpTopic title="Tasks" body="Plan work with Board, List, and Calendar views. Add assignees, priorities, due dates, project names, statuses, and archive completed or canceled work." theme={theme} />
             <HelpTopic title="Knowledge base" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting notes, and SOPs. Everyone except Guests can read knowledge articles; Owners and permitted Admins can manage them." theme={theme} />
-            <HelpTopic title="Attendance Tracking" body="Optional workforce tools. Admins and Members can clock in and out when enabled. Owners can correct records. Plus and Pro Hubs can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
+            <HelpTopic title="Attendance Tracking" body="Optional workforce tools. Admins and Members can clock in and out when enabled. Owners can correct records. Hub Owners can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
             <HelpTopic title="Employee Records" body="Optional workforce tools. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
             <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
-            <HelpTopic title="Email features" body="Plus and Pro Hubs can forward emails into a Room address so the message becomes a focused post, then send outbound email from a discussion with #recipient@example.com followed by the message. Use cc: for copies. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
+            <HelpTopic title="Email features" body="Connect Google Workspace/Gmail or Microsoft 365/Outlook, then send outbound email from a discussion using metadata lines such as to:, cc:, and subj:. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
-            <HelpTopic title="Billing and subscriptions" body="Owners manage paid plans and billable seats through Stripe Checkout or the billing portal. Promo codes, taxes, renewal terms, and prorations are controlled at checkout or in Stripe." theme={theme} />
+            <HelpTopic title="Billing and subscriptions" body="Owners manage the Hub subscription, promo codes, taxes, renewal terms, and payment methods through Stripe Checkout or the billing portal. Standard Hub pricing includes up to 25 employees; larger teams should contact TriCord for a custom plan." theme={theme} />
             <HelpTopic title="Personalization and settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Workforce, Help, reporting a problem, and logout." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl plus Backslash on Windows or Linux, or Command plus Backslash on macOS, to hide or show the discussion panel." theme={theme} />
             <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white lg:col-span-3"><Bug className="h-4 w-4" />Report a problem</button>
@@ -4899,7 +4950,7 @@ function SettingsModal({
           <section className={cn('rounded-lg border p-5', surface(theme))}>
             <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-9 w-9" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
             <p className={cn('mt-5 text-sm leading-7', muted(theme))}>TriCord brings conversations, project work, shared knowledge, and hub administration into one focused workspace.</p>
-            <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
+            <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm', muted(theme))}>{formatSubscriptionStatusLabel(workspace)}</p></div>
           </section>
         )}
 
@@ -5313,15 +5364,14 @@ function formatEmailProviderLabel(provider: string) {
   if (provider === 'gmail') return 'Gmail';
   if (provider === 'outlook') return 'Outlook';
   if (provider === 'microsoft365') return 'Microsoft 365';
-  if (provider === 'smtp') return 'Custom SMTP';
-  return 'TriCord Mail';
+  return 'Connected mailbox';
 }
 
 function ConnectedEmailAccountsSection({ accounts, loading, notice, theme, fallbackAddress, onConnect, onDefault, onDisconnect }: { accounts: UserEmailAccount[]; loading: boolean; notice: string; theme: 'light' | 'dark'; fallbackAddress: string; onConnect: (provider: string) => void; onDefault: (accountId: string) => void; onDisconnect: (accountId: string) => void }) {
   const connectedAccounts = accounts.filter((account) => account.is_connected);
   return <section className={cn('mt-6 border-t pt-5', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}>
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="font-bold">Connected Email Accounts</h3><p className={cn('mt-1 text-sm', muted(theme))}>TriCord can send Room email without connecting a mailbox. Replies go to the sender's TriCord account email.</p></div>
+      <div><h3 className="font-bold">Connected Email Accounts</h3><p className={cn('mt-1 text-sm', muted(theme))}>Connect Gmail, Google Workspace, Outlook, or Microsoft 365 so TriCord can send email from your own mailbox and keep the conversation attached to the discussion.</p></div>
       {loading && <Loader2 className="h-4 w-4 animate-spin" />}
     </div>
     <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -5335,8 +5385,8 @@ function ConnectedEmailAccountsSection({ accounts, loading, notice, theme, fallb
         </div>
       </div>)}
       <div className={cn('rounded-lg border p-4', surface(theme))}>
-        <div className="flex items-start justify-between gap-3"><div><p className="font-bold">TriCord Mail</p><p className={cn('mt-1 text-sm', muted(theme))}>{fallbackAddress}</p></div><StatusBadge label="Default" tone="neutral" /></div>
-        <p className={cn('mt-3 text-sm leading-6', muted(theme))}>No Gmail, Outlook, or SMTP setup is required. TriCord sends through the verified Room address and sets replies to your TriCord account email.</p>
+        <div className="flex items-start justify-between gap-3"><div><p className="font-bold">Account email</p><p className={cn('mt-1 text-sm', muted(theme))}>{fallbackAddress}</p></div><StatusBadge label="Sign-in identity" tone="neutral" /></div>
+        <p className={cn('mt-3 text-sm leading-6', muted(theme))}>This is your TriCord sign-in email. Connect Gmail or Microsoft 365 above when you want outbound email to send from an authorized mailbox.</p>
       </div>
     </div>
     {notice && <p className={cn('mt-3 rounded-lg border px-3 py-2 text-sm font-semibold', surface(theme))}>{notice}</p>}
@@ -6448,27 +6498,34 @@ function getMentionSearchValue(profile: AppProfile) {
 }
 
 function parseEmailSendCommand(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('#')) return null;
-  const match = trimmed.match(/^#([^\s,;<>]+@[^\s,;<>]+)\s+([\s\S]+)$/);
-  if (!match) return null;
-  const to = normalizeEmailAddress(match[1]);
+  const raw = value.trim();
+  if (!/^to:/im.test(raw) && !/^cc:/im.test(raw) && !/^subj(?:ect)?:/im.test(raw)) return null;
+  const lines = raw.split(/\r?\n/);
+  const metadata: Record<string, string[]> = { to: [], cc: [], bcc: [], subj: [] };
+  const bodyLines: string[] = [];
+  let inMetadata = true;
+  for (const line of lines) {
+    const match = inMetadata ? line.match(/^\s*(to|cc|bcc|subj|subject):\s*(.*)$/i) : null;
+    if (match) {
+      const key = match[1].toLowerCase() === 'subject' ? 'subj' : match[1].toLowerCase();
+      metadata[key].push(match[2]);
+      continue;
+    }
+    if (inMetadata && line.trim() === '') {
+      inMetadata = false;
+      continue;
+    }
+    inMetadata = false;
+    bodyLines.push(line);
+  }
+  const to = metadata.to.flatMap((line) => line.split(/[;,]/)).map(normalizeEmailAddress).filter(Boolean)[0];
   if (!to) return null;
-  let rest = match[2].trim();
-  const cc: string[] = [];
-  const bcc: string[] = [];
-  const bccMatch = rest.match(/^(?:bcc):\s*([^\n]+?)(?:\s{2,}|\s+-\s+|\n)([\s\S]+)$/i);
-  if (bccMatch) {
-    bcc.push(...bccMatch[1].split(/[;,]/).map(normalizeEmailAddress).filter(Boolean));
-    rest = bccMatch[2].trim();
-  }
-  const ccMatch = rest.match(/^(?:cc|copy):\s*([^\n]+?)(?:\s{2,}|\s+-\s+|\n)([\s\S]+)$/i);
-  if (ccMatch) {
-    cc.push(...ccMatch[1].split(/[;,]/).map(normalizeEmailAddress).filter(Boolean));
-    rest = ccMatch[2].trim();
-  }
-  if (!rest) return null;
-  return { to, cc: [...new Set(cc)].slice(0, 10), bcc: [...new Set(bcc)].slice(0, 10), message: rest };
+  const cc = metadata.cc.flatMap((line) => line.split(/[;,]/)).map(normalizeEmailAddress).filter(Boolean);
+  const bcc = metadata.bcc.flatMap((line) => line.split(/[;,]/)).map(normalizeEmailAddress).filter(Boolean);
+  const subject = metadata.subj.join(' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+  const message = bodyLines.join('\n').trim();
+  if (!message) return null;
+  return { to, cc: [...new Set(cc)].slice(0, 10), bcc: [...new Set(bcc)].slice(0, 10), subject, message };
 }
 
 function normalizeEmailAddress(value: string) {
@@ -6503,10 +6560,24 @@ async function updateWorkspaceBusinessModules(workspaceId: string, modules: Busi
   if (error) throw error;
 }
 
-function normalizePlan(plan: string): LaunchPlan {
-  if (plan === 'plus' || plan === 'business') return 'plus';
-  if (plan === 'pro') return 'pro';
-  return 'free';
+function getWorkspaceSubscriptionState(workspace?: AppWorkspace) {
+  const now = Date.now();
+  const trialEndsAt = workspace?.trial_ends_at ? Date.parse(workspace.trial_ends_at) : NaN;
+  const status = workspace?.subscription_status ?? (workspace?.plan && workspace.plan !== 'free' ? 'active' : 'trial');
+  const daysRemaining = Number.isFinite(trialEndsAt) ? Math.max(0, Math.ceil((trialEndsAt - now) / 86_400_000)) : null;
+  return { status, daysRemaining, trialEndsAt: Number.isFinite(trialEndsAt) ? trialEndsAt : null };
+}
+
+function formatSubscriptionStatusLabel(workspace?: AppWorkspace | null) {
+  const state = getWorkspaceSubscriptionState(workspace ?? undefined);
+  if (state.status === 'active') return 'Active subscription';
+  if (state.status === 'expired') return 'Trial expired';
+  if (state.status === 'cancelled') return 'Subscription cancelled';
+  return state.daysRemaining == null ? 'Free trial' : `${state.daysRemaining} day${state.daysRemaining === 1 ? '' : 's'} left in trial`;
+}
+
+function normalizePlan(_plan: string): LaunchPlan {
+  return 'tricord';
 }
 
 function getRoleLabel(role: WorkspaceRole) {

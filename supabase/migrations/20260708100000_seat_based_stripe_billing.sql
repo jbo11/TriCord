@@ -10,5 +10,5 @@ create index if not exists subscriptions_stripe_subscription_item_idx
 on public.subscriptions (stripe_subscription_item_id)
 where stripe_subscription_item_id is not null;
 
-comment on column public.subscriptions.seat_quantity is 'Current Stripe subscription quantity for paid Hub seats. Owners, Admins, and Members are billable; Guests are not.';
-comment on column public.subscriptions.stripe_subscription_item_id is 'Stripe subscription item used to update paid seat quantity.';
+comment on column public.subscriptions.seat_quantity is 'Stripe subscription quantity. Standard Hub uses quantity 1 and includes up to 25 employees.';
+comment on column public.subscriptions.stripe_subscription_item_id is 'Stripe subscription item linked to the Standard Hub subscription.';

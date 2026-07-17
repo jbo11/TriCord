@@ -5,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
 };
 
-type Provider = 'gmail' | 'outlook' | 'microsoft365' | 'resend' | 'smtp';
+type Provider = 'gmail' | 'outlook' | 'microsoft365';
 
 interface SendEmailRequest {
   workspaceId?: string;
@@ -90,7 +90,7 @@ Deno.serve(async (request) => {
     if (roomError || !room) return json({ error: 'Room not found.' }, 404);
 
     const userIdentity = await loadUserIdentity(adminClient, authData.user.id, authData.user.email || '');
-    const identity = await selectSenderIdentity(adminClient, workspaceId, authData.user.id, input.providerAccountId || '', room.email_alias || room.name, userIdentity.email, userIdentity.name);
+    const identity = await selectSenderIdentity(adminClient, workspaceId, authData.user.id, input.providerAccountId || '', userIdentity.email);
     auditBase = { workspace_id: workspaceId, post_id: postId, user_id: authData.user.id, provider: identity.provider, sender: identity.sender, reply_to: identity.replyTo, recipient: to, cc, bcc, subject };
 
     const result = await sendWithProvider(userClient, identity, { to, cc, bcc, subject: subject || `Re: ${post.title}`, text: body });
@@ -114,7 +114,7 @@ async function loadUserIdentity(adminClient: ReturnType<typeof createClient>, us
   return { email, name };
 }
 
-async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>, workspaceId: string, userId: string, preferredAccountId: string, roomAlias: string, userEmail: string, userDisplayName: string): Promise<SenderIdentity> {
+async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>, workspaceId: string, userId: string, preferredAccountId: string, userEmail: string): Promise<SenderIdentity> {
   const { data: accounts, error } = await adminClient
     .from('user_email_accounts')
     .select('id, provider, email_address, display_name, is_default, is_connected, last_error')
@@ -123,7 +123,7 @@ async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>
     .eq('is_connected', true);
   if (error) throw new Error(error.message);
 
-  const priority: Provider[] = ['gmail', 'outlook', 'microsoft365', 'resend', 'smtp'];
+  const priority: Provider[] = ['gmail', 'outlook', 'microsoft365'];
   const selected = preferredAccountId
     ? accounts?.find((account) => account.id === preferredAccountId)
     : accounts?.find((account) => account.is_default) ?? [...(accounts ?? [])].sort((a, b) => priority.indexOf(a.provider as Provider) - priority.indexOf(b.provider as Provider))[0];
@@ -132,15 +132,12 @@ async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>
     return { provider: selected.provider as Provider, sender: selected.email_address, accountId: selected.id, displayName: selected.display_name, replyTo: selected.email_address };
   }
 
-  const domain = (Deno.env.get('INBOUND_EMAIL_DOMAIN') || 'room.tricord.cc').replace(/^@/, '').toLowerCase();
-  return { provider: 'resend', sender: `${slugifyLocalPart(roomAlias)}@${domain}`, accountId: null, displayName: userDisplayName ? `${userDisplayName} via TriCord` : 'TriCord Room', replyTo: userEmail || null };
+  throw new Error(`Connect Gmail or Microsoft 365 before sending email from ${userEmail || 'this TriCord account'}.`);
 }
 
 async function sendWithProvider(userClient: ReturnType<typeof createClient>, identity: SenderIdentity, email: { to: string; cc: string[]; bcc: string[]; subject: string; text: string }) {
   if (identity.provider === 'gmail') return sendWithGmail(userClient, identity, email);
-  if (identity.provider === 'outlook' || identity.provider === 'microsoft365') return sendWithMicrosoft(userClient, identity, email);
-  if (identity.provider === 'smtp') throw new Error('Custom SMTP sending is not enabled yet. Save and test SMTP settings before sending.');
-  return sendWithResend(identity, email);
+  return sendWithMicrosoft(userClient, identity, email);
 }
 
 async function loadAccountSecret(userClient: ReturnType<typeof createClient>, identity: SenderIdentity) {
@@ -267,28 +264,6 @@ function encodeBase64Url(value: string) {
   return btoa(unescape(encodeURIComponent(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-async function sendWithResend(identity: SenderIdentity, email: { to: string; cc: string[]; bcc: string[]; subject: string; text: string }) {
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${requiredEnv('RESEND_API_KEY')}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: formatSender(identity),
-      to: [email.to],
-      cc: email.cc,
-      bcc: email.bcc,
-      subject: email.subject,
-      text: email.text,
-      reply_to: identity.replyTo ? [identity.replyTo] : undefined,
-    }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(result?.message || result?.error || 'Resend could not send the email.'));
-  return { messageId: result?.id as string | undefined };
-}
-
 function formatSender(identity: SenderIdentity) {
   const displayName = identity.displayName || 'TriCord Room';
   if (identity.sender.includes('<')) return identity.sender;
@@ -300,10 +275,6 @@ function normalizeEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
-function slugifyLocalPart(value: string) {
-  return value.toLowerCase().split('@')[0].normalize('NFKD').replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'room';
-}
-
 function sanitizeSubject(value: string) {
   return String(value).replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
@@ -311,7 +282,6 @@ function sanitizeSubject(value: string) {
 function friendlyEmailError(value: string) {
   if (/Gmail/.test(value)) return value;
   if (/Microsoft/.test(value)) return value;
-  if (/SMTP/.test(value)) return value;
   return value || 'Email could not be sent. Please try again.';
 }
 

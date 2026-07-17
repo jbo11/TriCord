@@ -21,7 +21,7 @@ Production target:
 - Future automation/AI placeholder: provider adapter layer to be designed after the core collaboration workflows are stable.
 - Search: Postgres full-text search first, pgvector semantic search second.
 - Payments: Stripe subscriptions, checkout, customer portal, webhooks.
-- Email: Resend transactional email and digests.
+- Email: user-authorized Gmail / Google Workspace and Microsoft 365 / Outlook integrations for mailbox-based email workflows.
 - Monitoring: Sentry for exceptions, PostHog for product analytics.
 - Deployment: Vercel for web, Supabase hosted Postgres/Storage/Auth, Docker for local and enterprise self-hosting.
 
@@ -184,8 +184,7 @@ File controls:
 
 Plans:
 
-- Free: small teams.
-- Pro: unlimited posts and collaboration history.
+- One subscription model: every new Hub starts with a 30-day free trial, then requires an active Hub subscription to continue editing.
 - Business: SSO, audit logs, admin controls.
 - Enterprise: multi-hub, compliance, dedicated support.
 
@@ -412,7 +411,7 @@ Pre-launch:
 
 Launch readiness:
 
-- Free and Pro onboarding tested end to end.
+- Trial and subscribed-Hub onboarding tested end to end.
 - Business plan gates in place.
 - Migration/import path documented.
 - Admin audit log visible.

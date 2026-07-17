@@ -8,7 +8,7 @@ export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'timekeeping' | 'hr' | '
 export type BusinessModuleKey = 'attendance_tracking' | 'employee_records' | 'payroll_preparation';
 export type BusinessModules = Record<BusinessModuleKey, boolean>;
 export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
-export type EmailProvider = 'gmail' | 'outlook' | 'microsoft365' | 'resend' | 'smtp';
+export type EmailProvider = 'gmail' | 'microsoft365' | 'outlook';
 
 export interface AppProfile {
   id: string;
@@ -30,7 +30,12 @@ export interface AppWorkspace {
   owner_id: string;
   logo_url: string | null;
   brand_color: string | null;
-  plan: 'free' | 'plus' | 'pro' | 'business' | 'enterprise';
+  plan?: 'free' | 'plus' | 'pro' | 'business' | 'enterprise';
+  trial_started_at?: string | null;
+  trial_ends_at?: string | null;
+  subscription_status?: 'trial' | 'active' | 'expired' | 'cancelled' | null;
+  subscription_started_at?: string | null;
+  subscription_cancelled_at?: string | null;
   business_modules?: Partial<BusinessModules> | null;
   business_module_disclaimers?: Record<string, string> | null;
   created_at: string;
@@ -76,10 +81,11 @@ export interface UserEmailAccount {
   email_address: string;
   display_name: string | null;
   token_expiry: string | null;
-  smtp_host: string | null;
-  smtp_port: number | null;
-  smtp_username: string | null;
-  smtp_encryption: string | null;
+  provider_account_id?: string | null;
+  scopes?: string[] | null;
+  last_sync_at?: string | null;
+  sync_cursor?: string | null;
+  revoked_at?: string | null;
   is_default: boolean;
   is_connected: boolean;
   last_error: string | null;
@@ -114,6 +120,12 @@ export interface AppPost {
   archived_at: string | null;
   last_activity_at: string;
   metadata: Record<string, unknown> | null;
+  conversation_key?: string | null;
+  email_subject?: string | null;
+  email_provider?: string | null;
+  email_account_id?: string | null;
+  email_provider_thread_id?: string | null;
+  email_provider_message_id?: string | null;
   created_at: string;
   updated_at: string;
   has_decision?: boolean;

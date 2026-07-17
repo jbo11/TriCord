@@ -50,7 +50,7 @@ Deno.serve(async (request) => {
 });
 
 async function syncSubscription(adminClient: ReturnType<typeof createClient>, subscription: Stripe.Subscription, workspaceId: string) {
-  const plan = normalizePlan(subscription.metadata?.plan);
+  const plan = 'tricord';
   const firstItem = subscription.items.data[0];
   const seatQuantity = firstItem?.quantity ?? null;
   await adminClient.from('subscriptions').upsert({
@@ -72,18 +72,22 @@ async function syncSubscription(adminClient: ReturnType<typeof createClient>, su
   }, { onConflict: 'workspace_id' });
 
   if (subscription.status === 'active' || subscription.status === 'trialing' || subscription.status === 'past_due') {
-    await adminClient.from('workspaces').update({ plan, updated_at: new Date().toISOString() }).eq('id', workspaceId);
+    await adminClient.from('workspaces').update({
+      subscription_status: 'active',
+      subscription_started_at: new Date().toISOString(),
+      subscription_cancelled_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', workspaceId);
   }
   if (subscription.status === 'canceled' || subscription.status === 'unpaid' || subscription.status === 'incomplete_expired') {
-    await adminClient.from('workspaces').update({ plan: 'free', updated_at: new Date().toISOString() }).eq('id', workspaceId);
+    await adminClient.from('workspaces').update({
+      subscription_status: 'cancelled',
+      subscription_cancelled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', workspaceId);
   }
 }
 
-function normalizePlan(value: string | undefined): 'free' | 'plus' | 'pro' {
-  if (value === 'plus' || value === 'business') return 'plus';
-  if (value === 'pro') return 'pro';
-  return 'free';
-}
 function timestamp(value: number | null | undefined) { return value ? new Date(value * 1000).toISOString() : null; }
 function getWorkspaceId(event: Stripe.Event) {
   const object = event.data.object as { metadata?: { workspace_id?: string }; client_reference_id?: string | null };

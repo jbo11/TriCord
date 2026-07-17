@@ -21,7 +21,7 @@ drop policy if exists "Hub members read overtime requests" on public.overtime_re
 create policy "Hub members read overtime requests" on public.overtime_requests
 for select using (
   exists (
-    select 1 from public.workspace_memberships wm
+    select 1 from public.memberships wm
     where wm.workspace_id = overtime_requests.workspace_id
       and wm.user_id = auth.uid()
   )
@@ -58,25 +58,11 @@ for update using (
 drop policy if exists "Owners and approved admins manage overtime requests" on public.overtime_requests;
 create policy "Owners and approved admins manage overtime requests" on public.overtime_requests
 for all using (
-  exists (
-    select 1 from public.workspace_memberships wm
-    where wm.workspace_id = overtime_requests.workspace_id
-      and wm.user_id = auth.uid()
-      and (
-        wm.role = 'owner'
-        or (wm.role = 'admin' and coalesce((wm.capabilities->>'approve_leave')::boolean, false))
-      )
-  )
+  public.has_workspace_role(overtime_requests.workspace_id, array['owner']::public.workspace_role[])
+  or public.has_workspace_capability(overtime_requests.workspace_id, 'approve_leave')
 ) with check (
-  exists (
-    select 1 from public.workspace_memberships wm
-    where wm.workspace_id = overtime_requests.workspace_id
-      and wm.user_id = auth.uid()
-      and (
-        wm.role = 'owner'
-        or (wm.role = 'admin' and coalesce((wm.capabilities->>'approve_leave')::boolean, false))
-      )
-  )
+  public.has_workspace_role(overtime_requests.workspace_id, array['owner']::public.workspace_role[])
+  or public.has_workspace_capability(overtime_requests.workspace_id, 'approve_leave')
 );
 
 do $$

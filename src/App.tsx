@@ -558,12 +558,12 @@ export default function App() {
     setLastSeenActivityAt(now);
   }, [unreadSeenKey]);
 
-  const openBillingPortal = useCallback(async () => {
-    if (!supabase || !workspaceId) return;
+  const openBillingPortal = useCallback(async (targetWorkspaceId = workspaceId) => {
+    if (!supabase || !targetWorkspaceId) return;
     try {
       setNotice('');
       setBillingError('');
-      const { data, error } = await supabase.functions.invoke('create-billing-portal-session', { body: { workspaceId } });
+      const { data, error } = await supabase.functions.invoke('create-billing-portal-session', { body: { workspaceId: targetWorkspaceId } });
       if (error) throw new Error(await getFunctionErrorMessage(error));
       const url = (data as { url?: string } | null)?.url;
       if (!url) throw new Error('Billing portal did not return a redirect URL.');
@@ -575,12 +575,12 @@ export default function App() {
     }
   }, [workspaceId]);
 
-  const startCheckout = useCallback(async (_plan: PaidPlan, interval: BillingInterval) => {
-    if (!supabase || !workspaceId) return;
+  const startCheckout = useCallback(async (_plan: PaidPlan, interval: BillingInterval, targetWorkspaceId = workspaceId) => {
+    if (!supabase || !targetWorkspaceId) return;
     try {
       setNotice('');
       setBillingError('');
-      const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: { workspaceId, plan: 'tricord', interval } });
+      const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: { workspaceId: targetWorkspaceId, plan: 'tricord', interval } });
       if (error) throw new Error(await getFunctionErrorMessage(error));
       const url = (data as { url?: string } | null)?.url;
       if (!url) throw new Error('Checkout did not return a redirect URL.');
@@ -1790,8 +1790,8 @@ export default function App() {
           error={billingError}
           canManageBilling={currentRole === 'owner'}
           onClose={() => setBillingModalOpen(false)}
-          onCheckout={(plan, interval) => startCheckout(plan, interval)}
-          onManageBilling={openBillingPortal}
+          onCheckout={(plan, interval) => startCheckout(plan, interval, selectedWorkspace.id)}
+          onManageBilling={() => openBillingPortal(selectedWorkspace.id)}
         />
       )}
 

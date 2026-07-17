@@ -132,7 +132,7 @@ async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>
     return { provider: selected.provider as Provider, sender: selected.email_address, accountId: selected.id, displayName: selected.display_name, replyTo: selected.email_address };
   }
 
-  throw new Error(`Connect Gmail or Microsoft 365 before sending email from ${userEmail || 'this TriCord account'}.`);
+  throw new Error(`Email delivery is not configured for ${userEmail || 'this TriCord account'}.`);
 }
 
 async function sendWithProvider(userClient: ReturnType<typeof createClient>, identity: SenderIdentity, email: { to: string; cc: string[]; bcc: string[]; subject: string; text: string }) {

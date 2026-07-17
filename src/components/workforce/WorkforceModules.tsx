@@ -131,7 +131,10 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const selfieRef = useRef<HTMLInputElement | null>(null);
   const canConfigure = premiumFeatures && (role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_timekeeping)));
   const canSeePremiumPolicyNotice = !premiumFeatures && role === 'owner';
-  const canClock = role === 'admin' || role === 'member';
+  const isExemptEmployee = employee?.exemption_status === 'exempt';
+  const attendanceEmployees = useMemo(() => employees.filter((item) => item.exemption_status !== 'exempt'), [employees]);
+  const attendanceEmployeeIds = useMemo(() => new Set(attendanceEmployees.map((item) => item.id)), [attendanceEmployees]);
+  const canClock = (role === 'admin' || role === 'member') && !isExemptEmployee;
   const canManageEntries = role === 'owner' || (role === 'admin' && Boolean(capabilities?.correct_attendance));
   const canViewEvidence = role === 'owner' || (role === 'admin' && Boolean(capabilities?.correct_attendance || capabilities?.manage_timekeeping));
 
@@ -151,12 +154,14 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     const ownEmployee = employeeResult.data as EmployeeProfile | null;
     const nextEmployees = (employeesResult.data ?? []) as EmployeeProfile[];
     const nextPolicies = (policiesResult.data ?? []) as EmployeeTimekeepingPolicy[];
+    const nextAttendanceEmployeeIds = new Set(nextEmployees.filter((item) => item.exemption_status !== 'exempt').map((item) => item.id));
+    const nextAttendancePolicies = nextPolicies.filter((policy) => nextAttendanceEmployeeIds.has(policy.employee_profile_id));
     setEmployee(ownEmployee);
     setEmployees(nextEmployees);
     setEntries((entriesResult.data ?? []) as TimeEntry[]);
     setEvents((eventsResult.data ?? []) as TimeEvent[]);
     setPolicies(nextPolicies);
-    const ownPolicy = nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null;
+    const ownPolicy = ownEmployee?.exemption_status === 'exempt' ? null : nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null;
     if ((role === 'admin' || role === 'member') && ownEmployee && ownPolicy) {
       const pendingKeys = pendingAttendanceRequirementKeys(ownPolicy);
       if (pendingKeys.length > 0) {
@@ -173,7 +178,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       }
     }
     if (canConfigure) {
-      setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
+      setSelectedPolicyEmployeeId((current) => current && nextAttendancePolicies.some((policy) => policy.employee_profile_id === current) ? current : nextAttendancePolicies[0]?.employee_profile_id ?? '');
     } else {
       setSettings(ownPolicy);
     }
@@ -197,8 +202,9 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     return () => { void supabase.removeChannel(channel); };
   }, [load, workspaceId]);
 
-  const ownEntries = entries.filter((entry) => entry.employee_profile_id === employee?.id);
-  const visibleEntries = canConfigure || canManageEntries ? entries : ownEntries;
+  const attendanceEntries = entries.filter((entry) => attendanceEmployeeIds.has(entry.employee_profile_id));
+  const ownEntries = isExemptEmployee ? [] : attendanceEntries.filter((entry) => entry.employee_profile_id === employee?.id);
+  const visibleEntries = canConfigure || canManageEntries ? attendanceEntries : ownEntries;
   const eventsByEntry = useMemo(() => {
     const grouped = new Map<string, TimeEvent[]>();
     events.forEach((event) => {
@@ -223,6 +229,10 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
 
   const runAction = async (action: 'clock_in' | 'clock_out' | 'break_start' | 'break_end') => {
     if (!supabase || !employee || !settings) return;
+    if (employee.exemption_status === 'exempt') {
+      onNotice('Attendance tracking is not available for exempt employees.');
+      return;
+    }
     setSaving(true);
     try {
       const location = await requestLocation();
@@ -337,6 +347,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     <ModuleFrame icon={Clock3} title="Attendance Tracking" subtitle="Clock in, clock out, and working-hour records" theme={theme}>
       <div className={cn('grid gap-4', canConfigure && 'lg:grid-cols-[minmax(0,1fr)_380px]')}>
         <div className="space-y-4">
+          {isExemptEmployee && (role === 'admin' || role === 'member') && <div className={cn('rounded-lg border p-4 text-sm font-semibold', panel(theme))}>Attendance tracking is not available because this profile is marked exempt.</div>}
           {canClock && <div className={cn('border-b pb-6', border(theme))}>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Metric label="Current status" value={status} accent theme={theme} />
@@ -381,7 +392,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         {canConfigure && <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>
           <h3 className="font-bold">Employee attendance policy</h3>
           <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Requirements are configured separately for each Admin or Member.</p>
-          <label className="mt-4 block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select value={selectedPolicyEmployeeId} onChange={(event) => setSelectedPolicyEmployeeId(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm font-semibold', panel(theme))}>{policies.map((policy) => <option key={policy.employee_profile_id} value={policy.employee_profile_id}>{employeeName(employees.find((item) => item.id === policy.employee_profile_id), profiles)}</option>)}</select></label>
+          <label className="mt-4 block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select value={selectedPolicyEmployeeId} onChange={(event) => setSelectedPolicyEmployeeId(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm font-semibold', panel(theme))}>{policies.filter((policy) => attendanceEmployeeIds.has(policy.employee_profile_id)).map((policy) => <option key={policy.employee_profile_id} value={policy.employee_profile_id}>{employeeName(employees.find((item) => item.id === policy.employee_profile_id), profiles)}</option>)}</select></label>
           {settings && <div className={cn('mt-4 border-t pt-4', border(theme))}>
             {ATTENDANCE_POLICY_NOTICE_KEYS.map((key) => <div key={key} className="py-0.5"><Toggle checked={settings[key] || Boolean(settings.pending_requirements?.[key])} onChange={(checked) => {
               if (checked) {
@@ -396,7 +407,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
             <div className="mt-3 flex gap-1">{['S','M','T','W','T','F','S'].map((day, index) => <button key={`${day}-${index}`} type="button" title={['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][index]} onClick={() => setSettings({ ...settings, workdays: settings.workdays.includes(index) ? settings.workdays.filter((value) => value !== index) : [...settings.workdays, index].sort() })} className={cn('h-8 w-8 rounded-md text-xs font-bold', settings.workdays.includes(index) ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : buttonSurface(theme))}>{day}</button>)}</div>
             <button onClick={() => void saveSettings()} disabled={saving} className="mt-4 h-10 w-full rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save settings</button>
           </div>}
-          {!settings && <p className={cn('mt-4 text-sm', muted(theme))}>No Admin or Member employee profiles are available.</p>}
+          {!settings && <p className={cn('mt-4 text-sm', muted(theme))}>No non-exempt Admin or Member employee profiles are available.</p>}
         </aside>}
       </div>
     </ModuleFrame>
@@ -762,7 +773,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   const canManageAttendance = role === 'owner' || Boolean(capabilities?.correct_attendance);
   const load = useCallback(async () => { if (!supabase) return; const [e, t, l, p, s, ts, h] = await Promise.all([supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId), supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).gte('work_date', from).lte('work_date', to), supabase.from('leave_requests').select('*').eq('workspace_id', workspaceId).lte('start_date', to).gte('end_date', from), supabase.from('payroll_items').select('*').eq('workspace_id', workspaceId), supabase.from('workforce_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(), supabase.from('timekeeping_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(), supabase.from('workforce_holidays').select('*').eq('workspace_id', workspaceId).gte('holiday_date', from).lte('holiday_date', to).order('holiday_date')]); const error = e.error ?? t.error ?? l.error ?? p.error ?? s.error ?? ts.error ?? h.error; if (error) return onNotice(error.message); setEmployees((e.data ?? []) as EmployeeProfile[]); setEntries((t.data ?? []) as TimeEntry[]); setLeave((l.data ?? []) as LeaveRequest[]); setPayroll((p.data ?? []) as PayrollItem[]); setSettings(s.data as WorkforceSettings | null); setTimeSettings(ts.data as TimekeepingSettings | null); setHolidays((h.data ?? []) as WorkforceHoliday[]); }, [from, onNotice, to, workspaceId]); useEffect(() => { void load(); }, [load]);
   useWorkforceRealtime(workspaceId, 'employee_profiles,time_entries,leave_requests,payroll_items,workforce_holidays', load);
-  const localToday = dateInTimezone(settings?.timezone ?? 'UTC'); const filteredEmployees = employees.filter((employee) => (department === 'all' || employee.department === department) && (employeeId === 'all' || employee.id === employeeId)); const ids = new Set(filteredEmployees.map((employee) => employee.id)); const filteredEntries = entries.filter((entry) => ids.has(entry.employee_profile_id)); const filteredLeave = leave.filter((request) => ids.has(request.employee_profile_id)); const filteredPayroll = payroll.filter((item) => ids.has(item.employee_profile_id)); const todayEntries = filteredEntries.filter((entry) => entry.work_date === localToday); const presentIds = new Set(todayEntries.map((entry) => entry.employee_profile_id)); const leaveTodayIds = new Set(filteredLeave.filter((request) => request.status === 'approved' && request.start_date <= localToday && request.end_date >= localToday).map((request) => request.employee_profile_id)); const holidayToday = holidays.some((holiday) => holiday.holiday_date === localToday); const scheduledToday = Boolean(timeSettings?.workdays?.includes(dayInTimezone(settings?.timezone ?? 'UTC')) && !holidayToday); const absent = scheduledToday ? filteredEmployees.filter((employee) => employee.employment_status === 'active' && !presentIds.has(employee.id) && !leaveTodayIds.has(employee.id)).length : 0; const startMinutes = parseTimeMinutes(timeSettings?.workday_start ?? '09:00') + Number(timeSettings?.grace_period_minutes ?? 0); const late = todayEntries.filter((entry) => timeMinutesInTimezone(entry.clock_in, settings?.timezone ?? 'UTC') > startMinutes).length; const totalHours = filteredEntries.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); const overtime = filteredEntries.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0); const formatter = new Intl.NumberFormat(settings?.locale ?? 'en-US', { style: 'currency', currency: settings?.currency_code ?? 'USD' }); const departments = [...new Set(employees.map((employee) => employee.department).filter(Boolean))] as string[];
+  const localToday = dateInTimezone(settings?.timezone ?? 'UTC'); const attendanceEmployees = employees.filter((employee) => employee.exemption_status !== 'exempt'); const filteredEmployees = attendanceEmployees.filter((employee) => (department === 'all' || employee.department === department) && (employeeId === 'all' || employee.id === employeeId)); const ids = new Set(filteredEmployees.map((employee) => employee.id)); const filteredEntries = entries.filter((entry) => ids.has(entry.employee_profile_id)); const filteredLeave = leave.filter((request) => ids.has(request.employee_profile_id)); const filteredPayroll = payroll.filter((item) => ids.has(item.employee_profile_id)); const todayEntries = filteredEntries.filter((entry) => entry.work_date === localToday); const presentIds = new Set(todayEntries.map((entry) => entry.employee_profile_id)); const leaveTodayIds = new Set(filteredLeave.filter((request) => request.status === 'approved' && request.start_date <= localToday && request.end_date >= localToday).map((request) => request.employee_profile_id)); const holidayToday = holidays.some((holiday) => holiday.holiday_date === localToday); const scheduledToday = Boolean(timeSettings?.workdays?.includes(dayInTimezone(settings?.timezone ?? 'UTC')) && !holidayToday); const absent = scheduledToday ? filteredEmployees.filter((employee) => employee.employment_status === 'active' && !presentIds.has(employee.id) && !leaveTodayIds.has(employee.id)).length : 0; const startMinutes = parseTimeMinutes(timeSettings?.workday_start ?? '09:00') + Number(timeSettings?.grace_period_minutes ?? 0); const late = todayEntries.filter((entry) => timeMinutesInTimezone(entry.clock_in, settings?.timezone ?? 'UTC') > startMinutes).length; const totalHours = filteredEntries.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); const overtime = filteredEntries.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0); const formatter = new Intl.NumberFormat(settings?.locale ?? 'en-US', { style: 'currency', currency: settings?.currency_code ?? 'USD' }); const departments = [...new Set(attendanceEmployees.map((employee) => employee.department).filter(Boolean))] as string[];
   const addHoliday = () => { setHolidayDraft({ holiday_date: today(), name: '' }); setHolidayModalOpen(true); };
   const saveHoliday = async () => { if (!supabase) return; if (!holidayDraft.holiday_date || !holidayDraft.name.trim()) { onNotice('Enter a holiday date and name.'); return; } const { error } = await supabase.from('workforce_holidays').insert({ workspace_id: workspaceId, holiday_date: holidayDraft.holiday_date, name: holidayDraft.name.trim(), country_code: settings?.country_code, paid: true }); if (error) onNotice(error.message); else { setHolidayModalOpen(false); await load(); } };
   const deleteHoliday = (id: string) => {
@@ -818,7 +829,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
         <Field label="From" type="date" value={from} onChange={setFrom} theme={theme} compact />
         <Field label="To" type="date" value={to} onChange={setTo} theme={theme} compact />
         <SelectField label="Department" value={department} options={['all', ...departments]} onChange={setDepartment} theme={theme} compact />
-        <label className="block w-40"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select aria-label="Employee filter" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} className={cn('h-10 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="all">All employees</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employeeName(employee, profiles)}</option>)}</select></label>
+        <label className="block w-40"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select aria-label="Employee filter" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} className={cn('h-10 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="all">All employees</option>{attendanceEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employeeName(employee, profiles)}</option>)}</select></label>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Employees present" value={String(presentIds.size)} theme={theme} accent /><Metric label="Employees late" value={String(late)} theme={theme} /><Metric label="Employees absent" value={String(absent)} theme={theme} /><Metric label="Employees on leave" value={String(leaveTodayIds.size)} theme={theme} /><Metric label="Total hours" value={formatDuration(totalHours)} theme={theme} /><Metric label="Overtime" value={formatDuration(overtime)} theme={theme} /><Metric label="Draft payroll total" value={formatter.format(filteredPayroll.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Pending leave" value={String(filteredLeave.filter((request) => request.status === 'pending').length)} theme={theme} /></div>
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"><div><h3 className="mb-3 font-bold">Attendance summary</h3><DataTable headers={['Employee', 'Department', 'Days Recorded', 'Hours', 'Overtime', 'Actions']} theme={theme}>{filteredEmployees.map((employee) => { const own = filteredEntries.filter((entry) => entry.employee_profile_id === employee.id); const latestEntry = [...own].sort((a, b) => Date.parse(b.clock_in) - Date.parse(a.clock_in))[0]; const hours = own.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); return <tr key={employee.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employee, profiles)}</Cell><Cell>{employee.department || '—'}</Cell><Cell>{new Set(own.map((entry) => entry.work_date)).size}</Cell><Cell>{formatDuration(hours)}</Cell><Cell>{formatDuration(own.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0))}</Cell><Cell>{canManageAttendance && latestEntry ? <div className="flex gap-2"><IconAction label="Edit latest attendance record" icon={Pencil} onClick={() => openAttendanceEntry(latestEntry)} /><IconAction label="Delete latest attendance record" icon={Trash2} onClick={() => deleteAttendanceEntry(latestEntry)} /></div> : <span className={muted(theme)}>—</span>}</Cell></tr>; })}</DataTable></div><aside className={cn('h-fit rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><h3 className="font-bold">Holidays</h3>{canManageHolidays && <button aria-label="Add holiday" title="Add Holiday" onClick={() => addHoliday()} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', buttonSurface(theme))}><Plus className="h-4 w-4" /></button>}</div><div className="mt-3 space-y-2">{holidays.map((holiday) => <div key={holiday.id} className="flex items-center justify-between gap-2 text-sm"><span><strong className="block">{holiday.name}</strong><span className={muted(theme)}>{formatDate(holiday.holiday_date)}</span></span>{canManageHolidays && <button aria-label="Delete holiday" title="Delete holiday" onClick={() => deleteHoliday(holiday.id)} className="text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button>}</div>)}{holidays.length === 0 && <p className={cn('text-sm', muted(theme))}>No holidays in this range.</p>}</div></aside></div>

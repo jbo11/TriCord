@@ -86,7 +86,6 @@ import {
   SortMode,
   TaskPriority,
   TaskStatus,
-  UserEmailAccount,
   UserPrivateProfile,
   ViewMode,
   WorkspaceCapabilities,
@@ -138,7 +137,6 @@ const BLOCKED_FILE_EXTENSIONS = new Set(['ade', 'adp', 'apk', 'app', 'bat', 'bin
 const GOOGLE_DRIVE_API_KEY = (import.meta.env.VITE_GOOGLE_API_KEY as string | undefined)?.trim();
 const GOOGLE_DRIVE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim();
 const GOOGLE_DRIVE_PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
-const INBOUND_EMAIL_DOMAIN = ((import.meta.env.VITE_INBOUND_EMAIL_DOMAIN as string | undefined)?.trim() || 'room.tricord.cc').replace(/^@/, '').replace(/\/$/, '').toLowerCase();
 const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL || '/';
 const USER_GUIDE_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.pdf`;
 const googleScriptPromises = new Map<string, Promise<void>>();
@@ -448,8 +446,6 @@ export default function App() {
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [memberships, setMemberships] = useState<AppMembership[]>([]);
   const [knowledgeArticles, setKnowledgeArticles] = useState<KnowledgeArticle[]>([]);
-  const [emailAccounts, setEmailAccounts] = useState<UserEmailAccount[]>([]);
-  const [selectedEmailAccountId, setSelectedEmailAccountId] = useState('');
   const [selectedPostId, setSelectedPostId] = useState('');
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -458,7 +454,6 @@ export default function App() {
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
   const [hubModalOpen, setHubModalOpen] = useState(false);
   const [renamingSpace, setRenamingSpace] = useState<AppSpace | null>(null);
-  const [forwardingRoom, setForwardingRoom] = useState<AppSpace | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<AccountModalView | null>(null);
   const [billingModalOpen, setBillingModalOpen] = useState(false);
@@ -507,11 +502,10 @@ export default function App() {
   const selectedPost = posts.find((post) => post.id === selectedPostId && (activeSpaceId === 'all' || post.space_id === activeSpaceId))
     ?? posts.find((post) => post.state !== 'archived' && (activeSpaceId === 'all' || post.space_id === activeSpaceId));
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
-  const selectedPostRoom = selectedPost ? spaces.find((space) => space.id === selectedPost.space_id) : undefined;
-  const fallbackSenderAddress = selectedPostRoom ? getRoomForwardingAddress(selectedPostRoom) : selectedWorkspace ? `${slugify(selectedWorkspace.name) || 'room'}@${INBOUND_EMAIL_DOMAIN}` : `room@${INBOUND_EMAIL_DOMAIN}`;
   const currentProfile = session?.user.id && profiles[session.user.id]
     ? { ...profiles[session.user.id], ...privateProfile }
     : undefined;
+  const accountSenderAddress = currentProfile?.email ?? session?.user.email ?? '';
   const ownerEmail = profiles[memberships.find((membership) => membership.role === 'owner')?.user_id ?? '']?.email ?? '';
   const memberProfiles = useMemo(
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
@@ -898,36 +892,6 @@ export default function App() {
       });
   }, [session?.user.id]);
 
-  const loadEmailAccounts = useCallback(async () => {
-    if (!supabase || !workspaceId || !session?.user.id) {
-      setEmailAccounts([]);
-      setSelectedEmailAccountId('');
-      return;
-    }
-    const { data, error } = await supabase
-      .from('user_email_accounts')
-      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, provider_account_id, scopes, last_sync_at, sync_cursor, revoked_at, is_default, is_connected, last_error, created_at, updated_at')
-      .eq('workspace_id', workspaceId)
-      .eq('user_id', session.user.id)
-      .eq('is_connected', true)
-      .order('is_default', { ascending: false })
-      .order('created_at', { ascending: true });
-    if (error) {
-      setNotice(error.message);
-      return;
-    }
-    const nextAccounts = (data ?? []) as UserEmailAccount[];
-    setEmailAccounts(nextAccounts);
-    setSelectedEmailAccountId((current) => {
-      if (current === 'room' || nextAccounts.some((account) => account.id === current)) return current;
-      return nextAccounts.find((account) => account.is_default)?.id ?? nextAccounts[0]?.id ?? 'room';
-    });
-  }, [session?.user.id, workspaceId]);
-
-  useEffect(() => {
-    void loadEmailAccounts();
-  }, [loadEmailAccounts]);
-
   const loadMemberships = useCallback(async (userId: string, preferredWorkspaceId?: string) => {
     if (!supabase) return;
 
@@ -1153,9 +1117,6 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'memberships', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_email_accounts', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        void loadEmailAccounts();
-      })
       .subscribe((status, error) => {
         if (status === 'SUBSCRIBED') workspaceChannelRef.current = channel;
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -1174,7 +1135,7 @@ export default function App() {
       if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [loadComments, loadEmailAccounts, loadWorkspaceData, session?.access_token, workspaceId]);
+  }, [loadComments, loadWorkspaceData, session?.access_token, workspaceId]);
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.user.id) return;
@@ -1330,7 +1291,6 @@ export default function App() {
               setNotice(getErrorMessage(caughtError));
             }
           }}
-          onOpenRoomEmail={(space) => setForwardingRoom(space)}
           onDeleteSpace={(space) => openConfirmDialog({
             title: 'Delete room?',
             body: `Delete the room "${space.name}"? Its posts, discussions, and related activity will also be permanently deleted.`,
@@ -1591,17 +1551,14 @@ export default function App() {
               canClose
               onConfirm={openConfirmDialog}
               premiumEmail={premiumFeatures}
-              emailAccounts={emailAccounts}
-              selectedEmailAccountId={selectedEmailAccountId}
-              fallbackSenderAddress={fallbackSenderAddress}
-              onSelectedEmailAccountIdChange={setSelectedEmailAccountId}
-              onReply={async (body, files, externalAttachments, parentCommentId, providerAccountId) => {
+              accountSenderAddress={accountSenderAddress}
+              onReply={async (body, files, externalAttachments, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 const emailCommand = parseEmailSendCommand(body);
                 let commentBody = body;
                 if (emailCommand) {
                   const { error } = await supabase.functions.invoke('send-room-email', {
-                    body: { workspaceId, postId: selectedPost.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}`, providerAccountId: providerAccountId === 'room' ? undefined : providerAccountId },
+                    body: { workspaceId, postId: selectedPost.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}` },
                   });
                   if (error) throw new Error(await getFunctionErrorMessage(error));
                   commentBody = `Email sent to ${emailCommand.to}${emailCommand.cc.length ? ` (cc: ${emailCommand.cc.join(', ')})` : ''}${emailCommand.bcc.length ? ` (bcc: ${emailCommand.bcc.join(', ')})` : ''}\n\n${emailCommand.message}`;
@@ -1702,15 +1659,6 @@ export default function App() {
         />
       )}
 
-      {forwardingRoom && (
-        <RoomEmailForwardingModal
-          theme={theme}
-          room={forwardingRoom}
-          premiumEmail={premiumFeatures}
-          onUpgrade={() => { setForwardingRoom(null); setBillingModalOpen(true); }}
-          onClose={() => setForwardingRoom(null)}
-        />
-      )}
 
       {renamingSpace && (
         <RenameRoomModal
@@ -1937,7 +1885,6 @@ function Sidebar({
   onRenameSpace,
   onSaveRoomOrder,
   onSetRoomPinned,
-  onOpenRoomEmail,
   onDeleteSpace,
   onOpenAccount,
   onSelectWorkspace,
@@ -1971,7 +1918,6 @@ function Sidebar({
   onRenameSpace: (space: AppSpace) => void;
   onSaveRoomOrder: (spaces: AppSpace[]) => Promise<void>;
   onSetRoomPinned: (space: AppSpace, pinned: boolean) => Promise<void>;
-  onOpenRoomEmail: (space: AppSpace) => void;
   onDeleteSpace: (space: AppSpace) => Promise<void>;
   onOpenAccount: (view: AccountModalView) => void;
   onSelectWorkspace: (workspaceId: string) => Promise<void>;
@@ -2193,7 +2139,6 @@ function Sidebar({
                     </button>
                     {menuOpen && (
                       <div className={cn('absolute right-2 z-[65] w-48 rounded-lg border p-1.5 text-sm shadow-2xl', menuOpensUp ? 'bottom-10' : 'top-10', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
-                        <RoomMenuButton icon={Mail} label="Email integration" onClick={() => { setRoomMenuId(''); onOpenRoomEmail(space); }} />
                         {canManageRoom && <RoomMenuButton icon={Pencil} label="Rename" onClick={() => { setRoomMenuId(''); onRenameSpace(space); }} />}
                         <RoomMenuButton icon={GripVertical} label={reorderMode ? 'Finish moving' : 'Move'} onClick={() => { setReorderMode((active) => !active); setRoomMenuId(''); }} />
                         <RoomMenuButton icon={ArrowUpDown} label="Sort" trailing={ChevronRight} active={sortMenuOpen} onClick={() => setSortMenuOpen((open) => !open)} />
@@ -2502,10 +2447,7 @@ function ThreadPanel({
   canClose,
   onConfirm,
   premiumEmail,
-  emailAccounts,
-  selectedEmailAccountId,
-  fallbackSenderAddress,
-  onSelectedEmailAccountIdChange,
+  accountSenderAddress,
   onReply,
   onReact,
   onEditComment,
@@ -2529,11 +2471,8 @@ function ThreadPanel({
   canClose: boolean;
   onConfirm: (dialog: ConfirmDialogState) => void;
   premiumEmail: boolean;
-  emailAccounts: UserEmailAccount[];
-  selectedEmailAccountId: string;
-  fallbackSenderAddress: string;
-  onSelectedEmailAccountIdChange: (accountId: string) => void;
-  onReply: (body: string, files: File[], externalAttachments: ExternalAttachmentDraft[], parentCommentId: string | null, providerAccountId: string) => Promise<void>;
+  accountSenderAddress: string;
+  onReply: (body: string, files: File[], externalAttachments: ExternalAttachmentDraft[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onEditComment: (commentId: string, body: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
@@ -2571,7 +2510,6 @@ function ThreadPanel({
   }, [mentionMatch, mentionProfiles]);
   const emailCommandPreview = premiumEmail ? parseEmailSendCommand(reply) : null;
   const lockedEmailCommand = !premiumEmail && Boolean(parseEmailSendCommand(reply));
-  const connectedEmailAccounts = premiumEmail ? emailAccounts.filter((account) => account.is_connected) : [];
 
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -2885,7 +2823,7 @@ function ThreadPanel({
             if (editingComment) {
               await onEditComment(editingComment.id, reply.trim());
             } else {
-              await onReply(reply.trim(), files, externalAttachments, replyingTo?.id ?? null, selectedEmailAccountId || 'room');
+              await onReply(reply.trim(), files, externalAttachments, replyingTo?.id ?? null);
             }
             if (replyDraftKey) window.localStorage.removeItem(replyDraftKey);
             setMentionMatch(null);
@@ -2913,21 +2851,14 @@ function ThreadPanel({
           }}
         />
         {lockedEmailCommand && (
-          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Connect Google Workspace/Gmail or Microsoft 365/Outlook to send email from discussions.</p>
+          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email is available on an active subscription. TriCord uses your TriCord account email as the sender identity.</p>
         )}
         {emailCommandPreview && (
           <div className={cn('mb-2 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
             <span className={cn('font-semibold', muted(theme))}>From</span>
-            <select
-              value={selectedEmailAccountId || 'room'}
-              onChange={(event) => onSelectedEmailAccountIdChange(event.target.value)}
-              className="min-w-[12rem] flex-1 rounded-md border border-inherit bg-transparent px-2 py-1 text-sm font-semibold outline-none"
-            >
-              <option value="room">Room Email · {fallbackSenderAddress}</option>
-              {connectedEmailAccounts.map((account) => (
-                <option key={account.id} value={account.id}>{formatEmailProviderLabel(account.provider)} · {account.email_address}{account.is_default ? ' · Default' : ''}</option>
-              ))}
-            </select>
+            <span className="min-w-[12rem] flex-1 rounded-md border border-inherit bg-transparent px-2 py-1 text-sm font-semibold">
+              TriCord Account · {accountSenderAddress || 'Your Sign-In Email'}
+            </span>
           </div>
         )}
         {editingComment && (
@@ -4264,54 +4195,6 @@ function SpaceModal({
   );
 }
 
-function RoomEmailForwardingModal({ theme, room, premiumEmail, onUpgrade, onClose }: { theme: 'light' | 'dark'; room: AppSpace; premiumEmail: boolean; onUpgrade: () => void; onClose: () => void }) {
-  const address = getRoomForwardingAddress(room);
-  const enabled = room.email_forwarding_enabled !== false;
-  const [copied, setCopied] = useState(false);
-
-  const copyAddress = async () => {
-    await navigator.clipboard.writeText(address);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  };
-
-  return (
-    <ModalShell theme={theme} title="Room Email" onClose={onClose}>
-      <div className="grid gap-4">
-        {!premiumEmail && <div className="rounded-lg border border-[#FDBA74] bg-[#FFF7ED] p-4 text-sm text-[#9A3412]"><p className="font-bold">Room Email</p><p className="mt-1 leading-6">Room email routing is available on active Standard Hub subscriptions. Forward email into Rooms and send outbound email from discussions without connecting personal mailboxes.</p><button type="button" onClick={onUpgrade} className="mt-3 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Manage billing</button></div>}
-        <div>
-          <p className="font-bold">Room Email Context For {room.name}</p>
-          <p className={cn('mt-1 text-sm leading-6', muted(theme))}>
-            Use this Room address to forward email into TriCord. Outbound email can be sent from the discussion by adding recipient metadata lines at the top of your reply, and TriCord keeps the sent message attached to the same post.
-          </p>
-        </div>
-        <div className={cn('rounded-lg border p-3', subtleButton(theme))}>
-          <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Room Email Address</p>
-          <div className="mt-2 flex items-center gap-2">
-            <code className={cn('min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-black/5 px-3 py-2 text-sm font-semibold dark:bg-white/10', !premiumEmail && 'opacity-50')}>{premiumEmail ? address : 'Email integration requires an active subscription'}</code>
-            <button type="button" disabled={!premiumEmail} onClick={() => void copyAddress()} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50', subtleButton(theme))}>
-              <Copy className="h-4 w-4" />
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </div>
-        {!enabled && <p className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">Email integration is disabled for this Room.</p>}
-        <div className={cn('rounded-lg border p-3 text-sm leading-6', surface(theme))}>
-          <p className="font-semibold">Send Email From A Discussion</p>
-          <ol className={cn('mt-2 list-decimal space-y-1 pl-5', muted(theme))}>
-            <li>Write recipient metadata lines at the top of your reply, such as <code>to:</code>, optional <code>cc:</code>, optional <code>bcc:</code>, and optional <code>subj:</code>.</li>
-            <li>TriCord sends the message through the Room email identity and keeps the sent email attached to the discussion.</li>
-            <li>Forward external email to the Room address when you want new customer or vendor context to become a TriCord post.</li>
-          </ol>
-        </div>
-        <p className={cn('text-xs leading-5', muted(theme))}>
-          The @ symbol is reserved for tagging Hub members. Email recipients are declared with <code>to:</code>, optional <code>cc:</code>, optional <code>bcc:</code>, and optional <code>subj:</code> lines.
-        </p>
-      </div>
-    </ModalShell>
-  );
-}
-
 function RenameRoomModal({ theme, room, onClose, onRename }: { theme: 'light' | 'dark'; room: AppSpace; onClose: () => void; onRename: (name: string) => Promise<void> }) {
   const [name, setName] = useState(room.name);
   const [submitting, setSubmitting] = useState(false);
@@ -4578,9 +4461,6 @@ function SettingsModal({
   const [concernType, setConcernType] = useState('Technical issue');
   const [concernDetails, setConcernDetails] = useState('');
   const [reportError, setReportError] = useState('');
-  const [emailAccounts, setEmailAccounts] = useState<UserEmailAccount[]>([]);
-  const [emailAccountNotice, setEmailAccountNotice] = useState('');
-  const [emailAccountsLoading, setEmailAccountsLoading] = useState(false);
   const [moduleSavingKey, setModuleSavingKey] = useState<BusinessModuleKey | ''>('');
   const [moduleError, setModuleError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -4595,69 +4475,11 @@ function SettingsModal({
     report: 'Report a problem',
   };
 
-  const loadEmailAccounts = useCallback(async () => {
-    if (!supabase || !workspace?.id || !profile?.id) return;
-    setEmailAccountsLoading(true);
-    const { data, error } = await supabase
-      .from('user_email_accounts')
-      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, provider_account_id, scopes, last_sync_at, sync_cursor, revoked_at, is_default, is_connected, last_error, created_at, updated_at')
-      .eq('workspace_id', workspace.id)
-      .eq('user_id', profile.id)
-      .order('is_default', { ascending: false })
-      .order('created_at', { ascending: true });
-    setEmailAccountsLoading(false);
-    if (error) setEmailAccountNotice(error.message);
-    else setEmailAccounts((data ?? []) as UserEmailAccount[]);
-  }, [profile?.id, workspace?.id]);
-
-  useEffect(() => {
-    if (section === 'profile') void loadEmailAccounts();
-  }, [loadEmailAccounts, section]);
-
   const updateNotificationPreference = (key: keyof NotificationPreferences, value: boolean) => {
     if (key === 'desktop' && value && 'Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission();
     }
     onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
-  };
-
-  const setDefaultEmailAccount = async (accountId: string) => {
-    if (!supabase) return;
-    setEmailAccountNotice('');
-    const { error } = await supabase.rpc('set_default_email_account', { target_account_id: accountId });
-    if (error) setEmailAccountNotice(error.message); else { setEmailAccountNotice('Default sending identity updated.'); await loadEmailAccounts(); }
-  };
-
-  const disconnectEmailAccount = async (accountId: string) => {
-    if (!supabase) return;
-    setEmailAccountNotice('');
-    const { error } = await supabase.rpc('disconnect_email_account', { target_account_id: accountId });
-    if (error) setEmailAccountNotice(error.message); else { setEmailAccountNotice('Email account disconnected.'); await loadEmailAccounts(); }
-  };
-
-  const connectEmailProvider = async (provider: string) => {
-    if (!supabase || !workspace?.id) return;
-    setEmailAccountNotice('');
-    const normalizedProvider = provider.toLowerCase().includes('gmail')
-      ? 'gmail'
-      : provider.toLowerCase().includes('microsoft') || provider.toLowerCase().includes('outlook')
-        ? 'microsoft365'
-        : '';
-    if (!normalizedProvider) {
-      setEmailAccountNotice('Choose Google Workspace/Gmail or Microsoft 365/Outlook to connect email.');
-      return;
-    }
-    const { data, error } = await supabase.functions.invoke('email-oauth-start', { body: { workspaceId: workspace.id, provider: normalizedProvider } });
-    if (error) {
-      setEmailAccountNotice(await getFunctionErrorMessage(error));
-      return;
-    }
-    const authUrl = (data as { authUrl?: string } | null)?.authUrl;
-    if (!authUrl) {
-      setEmailAccountNotice('Email connection could not start.');
-      return;
-    }
-    window.location.href = authUrl;
   };
 
   return (
@@ -5359,39 +5181,6 @@ function AccountMenuButton({ icon: Icon, label, rooming: RoomingIcon, active = f
   );
 }
 
-
-function formatEmailProviderLabel(provider: string) {
-  if (provider === 'gmail') return 'Gmail';
-  if (provider === 'outlook') return 'Outlook';
-  if (provider === 'microsoft365') return 'Microsoft 365';
-  return 'Connected mailbox';
-}
-
-function ConnectedEmailAccountsSection({ accounts, loading, notice, theme, fallbackAddress, onConnect, onDefault, onDisconnect }: { accounts: UserEmailAccount[]; loading: boolean; notice: string; theme: 'light' | 'dark'; fallbackAddress: string; onConnect: (provider: string) => void; onDefault: (accountId: string) => void; onDisconnect: (accountId: string) => void }) {
-  const connectedAccounts = accounts.filter((account) => account.is_connected);
-  return <section className={cn('mt-6 border-t pt-5', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}>
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="font-bold">Connected Email Accounts</h3><p className={cn('mt-1 text-sm', muted(theme))}>Connect Gmail, Google Workspace, Outlook, or Microsoft 365 so TriCord can send email from your own mailbox and keep the conversation attached to the discussion.</p></div>
-      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-    </div>
-    <div className="mt-4 grid gap-3 md:grid-cols-2">
-      {connectedAccounts.map((account) => <div key={account.id} className={cn('rounded-lg border p-4', surface(theme))}>
-        <div className="flex items-start justify-between gap-3"><div><p className="font-bold">{formatEmailProviderLabel(account.provider)}</p><p className={cn('mt-1 text-sm', muted(theme))}>{account.email_address}</p></div><StatusBadge label={account.is_default ? 'Default' : 'Connected'} tone={account.is_default ? 'accent' : 'success'} /></div>
-        {account.last_error && <p className="mt-3 rounded-md bg-[#FEF2F2] px-3 py-2 text-xs font-semibold text-[#B91C1C]">{account.last_error}</p>}
-        <div className="mt-4 flex flex-wrap gap-2">
-          {!account.is_default && <button type="button" onClick={() => onDefault(account.id)} className={cn('h-9 rounded-lg border px-3 text-sm font-semibold', subtleButton(theme))}>Make Default</button>}
-          <button type="button" onClick={() => onConnect(account.provider)} className={cn('h-9 rounded-lg border px-3 text-sm font-semibold', subtleButton(theme))}>Reconnect</button>
-          <button type="button" onClick={() => onDisconnect(account.id)} className={cn('h-9 rounded-lg border px-3 text-sm font-semibold text-[#B91C1C]', subtleButton(theme))}>Disconnect</button>
-        </div>
-      </div>)}
-      <div className={cn('rounded-lg border p-4', surface(theme))}>
-        <div className="flex items-start justify-between gap-3"><div><p className="font-bold">Account email</p><p className={cn('mt-1 text-sm', muted(theme))}>{fallbackAddress}</p></div><StatusBadge label="Sign-in identity" tone="neutral" /></div>
-        <p className={cn('mt-3 text-sm leading-6', muted(theme))}>This is your TriCord sign-in email. Connect Gmail or Microsoft 365 above when you want outbound email to send from an authorized mailbox.</p>
-      </div>
-    </div>
-    {notice && <p className={cn('mt-3 rounded-lg border px-3 py-2 text-sm font-semibold', surface(theme))}>{notice}</p>}
-  </section>;
-}
 
 function StatusBadge({ label, tone }: { label: string; tone: 'accent' | 'success' | 'neutral' }) {
   const className = tone === 'success' ? 'bg-[#DCFCE7] text-[#166534]' : tone === 'accent' ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : 'bg-black/5 text-current';
@@ -6216,11 +6005,6 @@ function normalizeGoogleDriveUrl(value: string) {
   } catch {
     return '';
   }
-}
-
-function getRoomForwardingAddress(space: AppSpace) {
-  const alias = (space.email_alias || `${slugify(space.name) || 'room'}-pending`).toLowerCase();
-  return `${alias}@${INBOUND_EMAIL_DOMAIN}`;
 }
 
 function normalizeEmailThreadUrl(value: string): { provider: 'gmail' | 'outlook'; url: string } | null {

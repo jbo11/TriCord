@@ -55,9 +55,16 @@ interface TimekeepingSettings {
   workday_start: string; workday_end: string; workdays: number[];
 }
 
+type AttendancePolicyKey = 'capture_location' | 'capture_ip' | 'capture_device' | 'require_selfie' | 'enforce_geofence';
+
 interface EmployeeTimekeepingPolicy extends TimekeepingSettings {
   employee_profile_id: string;
   enabled: boolean;
+  pending_requirements?: Partial<Record<AttendancePolicyKey, boolean>> | null;
+  pending_requested_at?: string | null;
+  pending_requested_by?: string | null;
+  accepted_requirements_at?: string | null;
+  declined_requirements_at?: string | null;
   updated_at?: string;
   updated_by?: string | null;
 }
@@ -113,7 +120,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [saving, setSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const [entryModal, setEntryModal] = useState<{ id: string; clockIn: string; clockOut: string } | null>(null);
-  const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string } | null>(null);
+  const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string; pending?: boolean; employeeProfileId?: string } | null>(null);
   const policySignatureRef = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
@@ -147,13 +154,19 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     setPolicies(nextPolicies);
     const ownPolicy = nextPolicies.find((policy) => policy.employee_profile_id === ownEmployee?.id) ?? null;
     if ((role === 'admin' || role === 'member') && ownEmployee && ownPolicy) {
-      const signature = attendancePolicySignature(ownPolicy);
-      const storageKey = attendancePolicyStorageKey(workspaceId, ownEmployee.id);
-      const previousSignature = window.localStorage.getItem(storageKey);
-      const notice = attendancePolicyChangeNotice(previousSignature, ownPolicy, userId);
-      if (notice && policySignatureRef.current !== signature) setPolicyNotice(notice);
-      window.localStorage.setItem(storageKey, signature);
-      policySignatureRef.current = signature;
+      const pendingKeys = pendingAttendanceRequirementKeys(ownPolicy);
+      if (pendingKeys.length > 0) {
+        const notice = attendancePendingRequirementNotice(pendingKeys.map(settingLabel));
+        setPolicyNotice({ ...notice, pending: true, employeeProfileId: ownEmployee.id });
+      } else {
+        const signature = attendancePolicySignature(ownPolicy);
+        const storageKey = attendancePolicyStorageKey(workspaceId, ownEmployee.id);
+        const previousSignature = window.localStorage.getItem(storageKey);
+        const notice = attendancePolicyChangeNotice(previousSignature, ownPolicy, userId);
+        if (notice && policySignatureRef.current !== signature) setPolicyNotice(notice);
+        window.localStorage.setItem(storageKey, signature);
+        policySignatureRef.current = signature;
+      }
     }
     if (canConfigure) {
       setSelectedPolicyEmployeeId((current) => current && nextPolicies.some((policy) => policy.employee_profile_id === current) ? current : nextPolicies[0]?.employee_profile_id ?? '');
@@ -232,17 +245,52 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const saveSettings = async () => {
     if (!supabase || !settings || !canConfigure) return;
     setSaving(true);
+    const currentPolicy = policies.find((policy) => policy.employee_profile_id === settings.employee_profile_id) ?? settings;
+    const pendingRequirements: Partial<Record<AttendancePolicyKey, boolean>> = { ...(currentPolicy.pending_requirements ?? {}) };
+    const requirementUpdates = {} as Record<AttendancePolicyKey, boolean>;
+    ATTENDANCE_POLICY_NOTICE_KEYS.forEach((key) => {
+      const requestedValue = Boolean(settings[key]) || settings.pending_requirements?.[key] === true;
+      const currentValue = Boolean(currentPolicy[key]);
+      if (requestedValue && !currentValue) {
+        pendingRequirements[key] = true;
+        requirementUpdates[key] = false;
+      } else if (!requestedValue) {
+        delete pendingRequirements[key];
+        requirementUpdates[key] = false;
+      } else {
+        requirementUpdates[key] = true;
+      }
+    });
+    const hasPendingRequirements = Object.values(pendingRequirements).some(Boolean);
     const { error } = await supabase.from('employee_timekeeping_policies').update({
-      capture_location: settings.capture_location, capture_ip: settings.capture_ip,
-      capture_device: settings.capture_device, require_selfie: settings.require_selfie,
-      enforce_geofence: settings.enforce_geofence, office_latitude: settings.office_latitude,
+      ...requirementUpdates,
+      pending_requirements: pendingRequirements,
+      pending_requested_at: hasPendingRequirements ? new Date().toISOString() : null,
+      pending_requested_by: hasPendingRequirements ? userId : null,
+      office_latitude: settings.office_latitude,
       office_longitude: settings.office_longitude, geofence_radius_meters: settings.geofence_radius_meters,
       standard_daily_hours: settings.standard_daily_hours, grace_period_minutes: settings.grace_period_minutes,
       workday_start: settings.workday_start, workday_end: settings.workday_end, workdays: settings.workdays,
       updated_at: new Date().toISOString(), updated_by: userId,
     }).eq('employee_profile_id', settings.employee_profile_id);
     setSaving(false);
-    if (error) onNotice(error.message); else { onNotice('Employee timekeeping policy saved.'); await load(); }
+    if (error) onNotice(error.message); else { onNotice(hasPendingRequirements ? 'Employee attendance policy saved. New requirements are pending employee acceptance.' : 'Employee attendance policy saved.'); await load(); }
+  };
+
+  const respondToPendingPolicy = async (acceptRequirements: boolean) => {
+    if (!supabase || !policyNotice?.employeeProfileId) return;
+    setSaving(true);
+    const { error } = await supabase.rpc('respond_to_attendance_policy_requirements', {
+      target_employee_profile_id: policyNotice.employeeProfileId,
+      accept_requirements: acceptRequirements,
+    });
+    setSaving(false);
+    if (error) onNotice(error.message);
+    else {
+      setPolicyNotice(null);
+      onNotice(acceptRequirements ? 'Attendance policy accepted.' : 'Attendance policy declined.');
+      await load();
+    }
   };
   const openAdjustEntry = (entry: TimeEntry) => {
     if (!canManageEntries) return;
@@ -331,14 +379,14 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
           <p className={cn('mt-1 text-xs leading-5', muted(theme))}>Requirements are configured separately for each Admin or Member.</p>
           <label className="mt-4 block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span><select value={selectedPolicyEmployeeId} onChange={(event) => setSelectedPolicyEmployeeId(event.target.value)} className={cn('h-11 w-full rounded-lg border px-3 text-sm font-semibold', panel(theme))}>{policies.map((policy) => <option key={policy.employee_profile_id} value={policy.employee_profile_id}>{employeeName(employees.find((item) => item.id === policy.employee_profile_id), profiles)}</option>)}</select></label>
           {settings && <div className={cn('mt-4 border-t pt-4', border(theme))}>
-            {(['capture_location', 'capture_ip', 'capture_device', 'require_selfie', 'enforce_geofence'] as const).map((key) => <div key={key}><Toggle checked={settings[key]} onChange={(checked) => {
+            {ATTENDANCE_POLICY_NOTICE_KEYS.map((key) => <div key={key} className="py-0.5"><Toggle checked={settings[key] || Boolean(settings.pending_requirements?.[key])} onChange={(checked) => {
               if (checked) {
                 const notice = attendanceSettingNotice(key);
                 setConfirmDialog({ title: notice.title, body: notice.body, confirmLabel: 'Continue', tone: 'accent', onConfirm: async () => setSettings({ ...settings, [key]: true }) });
                 return;
               }
-              setSettings({ ...settings, [key]: false });
-            }} label={settingLabel(key)} /></div>)}
+              setSettings({ ...settings, [key]: false, pending_requirements: { ...(settings.pending_requirements ?? {}), [key]: false } });
+            }} label={settingLabel(key)} />{settings.pending_requirements?.[key] && <p className={cn('ml-1 mt-1 text-xs font-semibold text-[var(--accent-strong)]')}>Pending employee acceptance</p>}</div>)}
             {settings.enforce_geofence && <div className="mt-3 grid grid-cols-2 gap-2"><SmallInput label="Latitude" value={settings.office_latitude ?? ''} onChange={(value) => setSettings({ ...settings, office_latitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Longitude" value={settings.office_longitude ?? ''} onChange={(value) => setSettings({ ...settings, office_longitude: numberOrNull(value) })} theme={theme} /><SmallInput label="Radius (m)" value={settings.geofence_radius_meters} onChange={(value) => setSettings({ ...settings, geofence_radius_meters: Number(value) })} theme={theme} /></div>}
             <div className="mt-4 grid grid-cols-2 gap-2"><SmallInput label="Workday starts" value={settings.workday_start?.slice(0, 5) ?? '09:00'} onChange={(value) => setSettings({ ...settings, workday_start: value })} theme={theme} /><SmallInput label="Workday ends" value={settings.workday_end?.slice(0, 5) ?? '17:00'} onChange={(value) => setSettings({ ...settings, workday_end: value })} theme={theme} /><SmallInput label="Grace (minutes)" value={settings.grace_period_minutes} onChange={(value) => setSettings({ ...settings, grace_period_minutes: Number(value) })} theme={theme} /></div>
             <div className="mt-3 flex gap-1">{['S','M','T','W','T','F','S'].map((day, index) => <button key={`${day}-${index}`} type="button" title={['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][index]} onClick={() => setSettings({ ...settings, workdays: settings.workdays.includes(index) ? settings.workdays.filter((value) => value !== index) : [...settings.workdays, index].sort() })} className={cn('h-8 w-8 rounded-md text-xs font-bold', settings.workdays.includes(index) ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : buttonSurface(theme))}>{day}</button>)}</div>
@@ -349,7 +397,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       </div>
     </ModuleFrame>
     {entryModal && <WorkforceModal title="Edit attendance entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save entry</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Clock in" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /><Field label="Clock out (optional)" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} /></div><p className={cn('mt-3 text-xs', muted(theme))}>Use a complete date and time, such as 2026-07-14T09:00:00Z.</p></WorkforceModal>}
-    {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={<button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
+    {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={policyNotice.pending ? <><button type="button" onClick={() => void respondToPendingPolicy(false)} disabled={saving} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Decline</button><button type="button" onClick={() => void respondToPendingPolicy(true)} disabled={saving} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Accept</button></> : <button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
     {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
 }
@@ -899,6 +947,19 @@ function attendancePolicySnapshot(policy: EmployeeTimekeepingPolicy) {
 
 function attendancePolicySignature(policy: EmployeeTimekeepingPolicy) {
   return JSON.stringify(attendancePolicySnapshot(policy));
+}
+
+function pendingAttendanceRequirementKeys(policy: EmployeeTimekeepingPolicy) {
+  const pending = policy.pending_requirements ?? {};
+  return ATTENDANCE_POLICY_NOTICE_KEYS.filter((key) => pending[key] === true);
+}
+
+function attendancePendingRequirementNotice(enabled: string[]) {
+  const base = attendanceEnabledNotice(enabled);
+  return {
+    title: base.title,
+    body: `${base.body} Please review and choose Accept to enable this requirement, or Decline if you do not consent.`,
+  };
 }
 
 function attendancePolicyChangeNotice(previousSignature: string | null, policy: EmployeeTimekeepingPolicy, currentUserId: string) {

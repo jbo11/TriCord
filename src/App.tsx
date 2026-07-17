@@ -1,4 +1,4 @@
-import { lazy, Suspense, type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -1601,6 +1601,12 @@ export default function App() {
                 await toggleReaction(selectedPost, commentId, session.user.id, emoji);
                 await loadComments(selectedPost.id);
               }}
+              onEditComment={async (commentId, body) => {
+                if (!selectedPost) return;
+                await updateComment(commentId, body);
+                void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId: selectedPost.id } });
+                await loadComments(selectedPost.id);
+              }}
               onDeleteComment={async (commentId) => {
                 if (!selectedPost) return;
                 await deleteComment(commentId);
@@ -2489,6 +2495,7 @@ function ThreadPanel({
   onSelectedEmailAccountIdChange,
   onReply,
   onReact,
+  onEditComment,
   onDeleteComment,
   onForward,
 }: {
@@ -2515,6 +2522,7 @@ function ThreadPanel({
   onSelectedEmailAccountIdChange: (accountId: string) => void;
   onReply: (body: string, files: File[], externalAttachments: ExternalAttachmentDraft[], parentCommentId: string | null, providerAccountId: string) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
+  onEditComment: (commentId: string, body: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
   onForward: (messageIds: string[], targetPostIds: string[]) => Promise<void>;
 }) {
@@ -2527,6 +2535,7 @@ function ThreadPanel({
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<AppComment | null>(null);
+  const [editingComment, setEditingComment] = useState<AppComment | null>(null);
   const [forwarding, setForwarding] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
@@ -2582,9 +2591,16 @@ function ThreadPanel({
   }, [reply, replyDraftKey]);
 
   useEffect(() => {
+    if (!error) return;
+    const timeoutId = window.setTimeout(() => setError(''), 20000);
+    return () => window.clearTimeout(timeoutId);
+  }, [error]);
+
+  useEffect(() => {
     setForwarding(false);
     setForwardModalOpen(false);
     setComposerEmojiOpen(false);
+    setEditingComment(null);
     setSelectedMessageIds(new Set());
   }, [post?.id]);
 
@@ -2705,6 +2721,19 @@ function ThreadPanel({
     setSelectedMessageIds(new Set([messageId]));
   };
 
+  const beginEditComment = (comment: AppComment) => {
+    setEditingComment(comment);
+    setReplyingTo(null);
+    setFiles([]);
+    setExternalAttachments([]);
+    setError('');
+    setReply(comment.body);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(comment.body.length, comment.body.length);
+    });
+  };
+
   const toggleForwardSelection = (messageId: string) => {
     setSelectedMessageIds((current) => {
       const next = new Set(current);
@@ -2771,6 +2800,7 @@ function ThreadPanel({
               workspaceId={post.workspace_id}
               reactions={reactions.filter((reaction) => reaction.post_id === post.id && !reaction.comment_id)}
               currentUserId={currentUserId}
+              mentionProfiles={mentionProfiles}
               onReply={() => { setReplyingTo(null); textareaRef.current?.focus(); }}
               onReact={(emoji) => onReact(null, emoji)}
               onForward={() => beginForward(post.id)}
@@ -2791,11 +2821,13 @@ function ThreadPanel({
                   workspaceId={comment.workspace_id}
                   reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
                   currentUserId={currentUserId}
+                  mentionProfiles={mentionProfiles}
                   preferMenuAbove
                   parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
                   onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
                   onReact={(emoji) => onReact(comment.id, emoji)}
                   onForward={() => beginForward(comment.id)}
+                  onEdit={comment.author_id === currentUserId || canManage ? () => beginEditComment(comment) : undefined}
                   onDelete={comment.author_id === currentUserId || canManage ? async () => {
                     onConfirm({
                       title: 'Delete message?',
@@ -2837,13 +2869,18 @@ function ThreadPanel({
           setSubmitting(true);
           setError('');
           try {
-            await onReply(reply.trim(), files, externalAttachments, replyingTo?.id ?? null, selectedEmailAccountId || 'room');
+            if (editingComment) {
+              await onEditComment(editingComment.id, reply.trim());
+            } else {
+              await onReply(reply.trim(), files, externalAttachments, replyingTo?.id ?? null, selectedEmailAccountId || 'room');
+            }
             if (replyDraftKey) window.localStorage.removeItem(replyDraftKey);
             setMentionMatch(null);
             setReply('');
             setFiles([]);
             setExternalAttachments([]);
             setReplyingTo(null);
+            setEditingComment(null);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -2880,7 +2917,14 @@ function ThreadPanel({
             </select>
           </div>
         )}
-        {replyingTo && (
+        {editingComment && (
+          <div className={cn('mb-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
+            <Pencil className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1"><strong>Editing message</strong><span className={cn('ml-2', muted(theme))}>Save changes or cancel editing.</span></span>
+            <button type="button" aria-label="Cancel edit" title="Cancel edit" onClick={() => { setEditingComment(null); setReply(''); }}><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
+        {replyingTo && !editingComment && (
           <div className={cn('mb-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
             <ReplyIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
@@ -2944,7 +2988,7 @@ function ThreadPanel({
           placeholder="Reply to this post"
           className={cn('h-24 w-full resize-none rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none', subtleButton(theme))}
         />
-        {(files.length > 0 || externalAttachments.length > 0) && (
+        {!editingComment && (files.length > 0 || externalAttachments.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">
             {files.map((file, index) => (
               <span key={`${file.name}-${index}`} className={cn('inline-flex max-w-full items-center gap-2 rounded-lg border px-2 py-1 text-xs', subtleButton(theme))}>
@@ -2986,7 +3030,7 @@ function ThreadPanel({
           </div>
         )}
         <div className="mt-3 flex items-center gap-3">
-          <div ref={attachmentMenuRef} className="relative">
+          {!editingComment && <div ref={attachmentMenuRef} className="relative">
             <button
               type="button"
               aria-label="Add attachments"
@@ -3008,10 +3052,10 @@ function ThreadPanel({
                 onEmoji={() => { setAttachmentMenuOpen(false); setComposerEmojiOpen(true); }}
               />
             )}
-          </div>
+          </div>}
           <button disabled={submitting || (!reply.trim() && files.length === 0 && externalAttachments.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Reply
+            {editingComment ? 'Save' : 'Reply'}
           </button>
         </div>
       </form>
@@ -3062,7 +3106,7 @@ function MentionSuggestions({ theme, profiles, activeIndex, onSelect }: { theme:
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, preferMenuAbove = false, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; preferMenuAbove?: boolean; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, mentionProfiles, preferMenuAbove = false, parentComment, onReply, onReact, onForward, onEdit, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; mentionProfiles: AppProfile[]; preferMenuAbove?: boolean; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onEdit?: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -3101,7 +3145,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
           <strong>{parentComment.body ? parentComment.body.slice(0, 90) : 'Attachment'}</strong>
         </div>
       )}
-      {body && <RichMessageText body={body} theme={theme} />}
+      {body && <RichMessageText body={body} theme={theme} mentionProfiles={mentionProfiles} />}
       {urls.length > 0 && (
         <div className="mt-3 grid gap-2">
           {urls.map((url) => <div key={url}><LinkPreviewCard url={url} workspaceId={workspaceId} theme={theme} /></div>)}
@@ -3135,7 +3179,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
                 return;
               }
               const rect = event.currentTarget.getBoundingClientRect();
-              const menuHeight = onDelete ? 210 : 170;
+              const menuHeight = onDelete || onEdit ? 250 : 170;
               const hasRoomAbove = rect.top - menuHeight - 8 >= 8;
               const hasRoomBelow = rect.bottom + menuHeight + 8 <= window.innerHeight;
               const top = preferMenuAbove && hasRoomAbove
@@ -3159,6 +3203,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
               <MessageMenuButton icon={Copy} label="Copy" onClick={() => { void navigator.clipboard.writeText(body); setMenuOpen(false); }} />
               <MessageMenuButton icon={Smile} label="React" onClick={() => { setReactionPickerOpen(true); setMenuOpen(false); }} />
               <MessageMenuButton icon={Share2} label="Forward" onClick={() => { onForward(); setMenuOpen(false); }} />
+              {onEdit && <MessageMenuButton icon={Pencil} label="Edit" onClick={() => { onEdit(); setMenuOpen(false); }} />}
               {onDelete && <MessageMenuButton icon={Trash2} label="Delete" danger onClick={() => { void runAction(onDelete); setMenuOpen(false); }} />}
             </div>
           )}
@@ -3421,13 +3466,14 @@ function MessageMenuButton({ icon: Icon, label, onClick, danger = false }: { ico
   );
 }
 
-function RichMessageText({ body, theme }: { body: string; theme: 'light' | 'dark' }) {
-  const parts = body.split(/(https?:\/\/[^\s<]+)/gi);
+function RichMessageText({ body, theme, mentionProfiles }: { body: string; theme: 'light' | 'dark'; mentionProfiles: AppProfile[] }) {
+  const tokens = buildMessageTextTokens(body, mentionProfiles);
   return (
     <p className={cn('whitespace-pre-wrap break-words text-sm leading-6', muted(theme))}>
-      {parts.map((part, index) => {
-        const url = normalizeSharedUrl(part);
-        return url ? <a key={`${url}-${index}`} href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#0F766E] underline decoration-[#0F766E]/40 underline-offset-2">{part}</a> : part;
+      {tokens.map((token, index) => {
+        if (token.kind === 'url') return <a key={`${token.href}-${index}`} href={token.href} target="_blank" rel="noreferrer" className="font-semibold text-[#0F766E] underline decoration-[#0F766E]/40 underline-offset-2">{token.text}</a>;
+        if (token.kind === 'mention') return <span key={`${token.text}-${index}`} className="rounded px-1 py-0.5 font-bold text-[var(--accent-strong)] bg-[var(--accent-soft)]">{token.text}</span>;
+        return <Fragment key={`${token.text}-${index}`}>{token.text}</Fragment>;
       })}
     </p>
   );
@@ -5705,6 +5751,13 @@ async function toggleReaction(post: AppPost, commentId: string | null, userId: s
   if (error) throw error;
 }
 
+async function updateComment(commentId: string, body: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.from('comments').update({ body, updated_at: new Date().toISOString() }).eq('id', commentId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This message could not be edited.');
+}
+
 async function deleteComment(commentId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data: attachmentRows } = await supabase.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
@@ -6337,7 +6390,47 @@ function extractUrls(value: string) {
   return [...new Set(matches.map(normalizeSharedUrl).filter((url): url is string => Boolean(url)))].slice(0, 3);
 }
 
+type MessageTextToken = { kind: 'text'; text: string } | { kind: 'url'; text: string; href: string } | { kind: 'mention'; text: string };
 
+function buildMessageTextTokens(value: string, mentionProfiles: AppProfile[]): MessageTextToken[] {
+  const mentionNames = [...new Set(mentionProfiles.map((profile) => getProfileName(profile, profile.email.split('@')[0] || 'Hub member').trim()).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  const tokens: MessageTextToken[] = [];
+  const pattern = /(https?:\/\/[^\s<]+)|(@[^\s@#]+(?:\s+[^\s@#]+){0,3})/gi;
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) tokens.push({ kind: 'text', text: value.slice(cursor, index) });
+    const raw = match[0];
+    const url = normalizeSharedUrl(raw);
+    if (url) {
+      tokens.push({ kind: 'url', text: shortenUrlForDisplay(url), href: url });
+    } else {
+      const mentionName = mentionNames.find((name) => raw.toLowerCase().startsWith(`@${name.toLowerCase()}`));
+      if (mentionName) {
+        const mentionText = raw.slice(0, mentionName.length + 1);
+        tokens.push({ kind: 'mention', text: mentionText });
+        if (raw.length > mentionText.length) tokens.push({ kind: 'text', text: raw.slice(mentionText.length) });
+      } else {
+        tokens.push({ kind: 'text', text: raw });
+      }
+    }
+    cursor = index + raw.length;
+  }
+  if (cursor < value.length) tokens.push({ kind: 'text', text: value.slice(cursor) });
+  return tokens;
+}
+
+function shortenUrlForDisplay(url: string) {
+  try {
+    const parsed = new URL(url);
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    if (path.length <= 28) return url;
+    return `${parsed.origin}${parsed.pathname.slice(0, 18)}...${path.slice(-12)}`;
+  } catch {
+    return url.length > 48 ? `${url.slice(0, 32)}...${url.slice(-12)}` : url;
+  }
+}
 
 function getActiveMentionMatch(value: string, caretPosition: number) {
   const prefix = value.slice(0, caretPosition);

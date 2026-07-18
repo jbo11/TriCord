@@ -88,6 +88,7 @@ import {
   TaskStatus,
   UserPrivateProfile,
   ViewMode,
+  UserEmailAccount,
   WorkspaceCapabilities,
   WorkspaceRole,
 } from './types';
@@ -205,7 +206,8 @@ interface RoomCompactSettings {
   rooms: Record<string, boolean>;
 }
 
-type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'notifications' | 'help' | 'about' | 'report';
+type AccountModalView = 'personalization' | 'profile' | 'settings' | 'subscription' | 'notifications' | 'email' | 'help' | 'about' | 'report';
+type ConnectedEmailProvider = 'gmail' | 'microsoft365';
 interface HubSetup { name: string; countryCode: string; currencyCode: string; locale: string; timezone: string; dateFormat: string; payrollFrequency: string; firstDayOfWeek: number }
 
 interface ConfirmDialogState {
@@ -471,6 +473,8 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(true);
   const [chatOnOtherPages, setChatOnOtherPages] = useState(getInitialChatOpen);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
+  const [emailAccounts, setEmailAccounts] = useState<UserEmailAccount[]>([]);
+  const [selectedEmailAccountId, setSelectedEmailAccountId] = useState('');
   const [lastSeenActivityAt, setLastSeenActivityAt] = useState(new Date().toISOString());
   const selectedPostIdRef = useRef('');
   const commentsSignatureRef = useRef('');
@@ -505,7 +509,12 @@ export default function App() {
   const currentProfile = session?.user.id && profiles[session.user.id]
     ? { ...profiles[session.user.id], ...privateProfile }
     : undefined;
-  const accountSenderAddress = currentProfile?.email ?? session?.user.email ?? '';
+  const selectedEmailAccount = useMemo(
+    () => emailAccounts.find((account) => account.id === selectedEmailAccountId)
+      ?? emailAccounts.find((account) => account.is_default)
+      ?? emailAccounts[0],
+    [emailAccounts, selectedEmailAccountId],
+  );
   const ownerEmail = profiles[memberships.find((membership) => membership.role === 'owner')?.user_id ?? '']?.email ?? '';
   const memberProfiles = useMemo(
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
@@ -756,6 +765,10 @@ export default function App() {
     });
   }, [posts, query, session?.user.id, sort]);
 
+  useEffect(() => {
+    if (selectedEmailAccountId && !emailAccounts.some((account) => account.id === selectedEmailAccountId)) setSelectedEmailAccountId('');
+  }, [emailAccounts, selectedEmailAccountId]);
+
   const getMostRecentPostForSpace = useCallback((spaceId: string) => {
     const candidates = posts.filter((post) => {
       if (post.state === 'archived') return false;
@@ -784,6 +797,27 @@ export default function App() {
     const nextPost = getMostRecentPostForSpace(activeSpaceId);
     setSelectedPostId(nextPost?.id ?? '');
   }, [activeSpaceId, getMostRecentPostForSpace, posts, selectedPostId, view]);
+
+  const loadEmailAccounts = useCallback(async (targetWorkspaceId: string) => {
+    if (!supabase || !session?.user.id || !targetWorkspaceId) {
+      setEmailAccounts([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from('user_email_accounts')
+      .select('id, workspace_id, user_id, provider, email_address, display_name, token_expiry, provider_account_id, scopes, last_sync_at, sync_cursor, revoked_at, is_default, is_connected, last_error, created_at, updated_at')
+      .eq('workspace_id', targetWorkspaceId)
+      .eq('user_id', session.user.id)
+      .eq('is_connected', true)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('Could not load connected email accounts', error.message);
+      setEmailAccounts([]);
+      return;
+    }
+    setEmailAccounts((data ?? []) as UserEmailAccount[]);
+  }, [session?.user.id]);
 
   const loadWorkspaceData = useCallback(async (targetWorkspaceId: string, silent = false) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -846,6 +880,7 @@ export default function App() {
     setMemberships(nextMemberships);
     setKnowledgeArticles(nextKnowledgeArticles);
     setCapabilities((capabilityResult.data as WorkspaceCapabilities | null) ?? null);
+    void loadEmailAccounts(targetWorkspaceId);
     setSelectedPostId((current) => current || nextPosts[0]?.id || '');
     setActiveSpaceId((current) => (current === 'all' || nextSpaces.some((space) => space.id === current) ? current : 'all'));
 
@@ -866,7 +901,7 @@ export default function App() {
     }
 
     if (!silent) setLoading(false);
-  }, [session?.user.id]);
+  }, [loadEmailAccounts, session?.user.id]);
 
   useEffect(() => {
     if (!supabase || !session?.user.id) {
@@ -916,6 +951,7 @@ export default function App() {
       setSpaces([]);
       setPosts([]);
       setTasks([]);
+      setEmailAccounts([]);
       setLoading(false);
       return;
     }
@@ -1551,17 +1587,21 @@ export default function App() {
               canClose
               onConfirm={openConfirmDialog}
               premiumEmail={premiumFeatures}
-              accountSenderAddress={accountSenderAddress}
+              emailAccounts={emailAccounts}
+              selectedEmailAccountId={selectedEmailAccount?.id ?? ''}
+              onSelectedEmailAccountIdChange={setSelectedEmailAccountId}
+              onOpenEmailSettings={() => setAccountModal('email')}
               onReply={async (body, files, externalAttachments, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 const emailCommand = parseEmailSendCommand(body);
                 let commentBody = body;
                 if (emailCommand) {
+                  if (!selectedEmailAccount) throw new Error('Connect Gmail or Microsoft 365 in Settings before sending email from a discussion.');
                   const { error } = await supabase.functions.invoke('send-room-email', {
-                    body: { workspaceId, postId: selectedPost.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}` },
+                    body: { workspaceId, postId: selectedPost.id, providerAccountId: selectedEmailAccount.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}` },
                   });
                   if (error) throw new Error(await getFunctionErrorMessage(error));
-                  commentBody = `Email sent to ${emailCommand.to}${emailCommand.cc.length ? ` (cc: ${emailCommand.cc.join(', ')})` : ''}${emailCommand.bcc.length ? ` (bcc: ${emailCommand.bcc.join(', ')})` : ''}\n\n${emailCommand.message}`;
+                  commentBody = `Email sent from ${selectedEmailAccount.email_address} to ${emailCommand.to}${emailCommand.cc.length ? ` (cc: ${emailCommand.cc.join(', ')})` : ''}${emailCommand.bcc.length ? ` (bcc: ${emailCommand.bcc.join(', ')})` : ''}\n\n${emailCommand.message}`;
                 }
                 await createComment(selectedPost, session.user.id, commentBody, false, files, externalAttachments, parentCommentId);
                 void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId: selectedPost.id } });
@@ -1779,6 +1819,29 @@ export default function App() {
           businessModules={savedBusinessModules}
           notificationPreferences={notificationPreferences}
           onNotificationPreferencesChange={setNotificationPreferences}
+          emailAccounts={emailAccounts}
+          onConnectEmail={async (provider) => {
+            if (!supabase || !workspaceId) throw new Error('Hub not found.');
+            const { data, error } = await supabase.functions.invoke('email-oauth-start', { body: { workspaceId, provider } });
+            if (error) throw new Error(await getFunctionErrorMessage(error));
+            const authUrl = (data as { authUrl?: string } | null)?.authUrl;
+            if (!authUrl) throw new Error('Email authorization did not return a redirect URL.');
+            window.location.href = authUrl;
+          }}
+          onSetDefaultEmail={async (accountId) => {
+            if (!supabase || !workspaceId) return;
+            const { error } = await supabase.rpc('set_default_email_account', { target_account_id: accountId });
+            if (error) throw error;
+            setSelectedEmailAccountId(accountId);
+            await loadEmailAccounts(workspaceId);
+          }}
+          onDisconnectEmail={async (accountId) => {
+            if (!supabase || !workspaceId) return;
+            const { error } = await supabase.rpc('disconnect_email_account', { target_account_id: accountId });
+            if (error) throw error;
+            if (selectedEmailAccountId === accountId) setSelectedEmailAccountId('');
+            await loadEmailAccounts(workspaceId);
+          }}
           onBusinessModulesChange={async (nextModules) => {
             if (!selectedWorkspace || currentRole !== 'owner') return;
             const changedEntry = BUSINESS_MODULE_CONFIGS.find((module) => !getBusinessModules(selectedWorkspace)[module.key] && nextModules[module.key]);
@@ -2447,7 +2510,10 @@ function ThreadPanel({
   canClose,
   onConfirm,
   premiumEmail,
-  accountSenderAddress,
+  emailAccounts,
+  selectedEmailAccountId,
+  onSelectedEmailAccountIdChange,
+  onOpenEmailSettings,
   onReply,
   onReact,
   onEditComment,
@@ -2471,7 +2537,10 @@ function ThreadPanel({
   canClose: boolean;
   onConfirm: (dialog: ConfirmDialogState) => void;
   premiumEmail: boolean;
-  accountSenderAddress: string;
+  emailAccounts: UserEmailAccount[];
+  selectedEmailAccountId: string;
+  onSelectedEmailAccountIdChange: (accountId: string) => void;
+  onOpenEmailSettings: () => void;
   onReply: (body: string, files: File[], externalAttachments: ExternalAttachmentDraft[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onEditComment: (commentId: string, body: string) => Promise<void>;
@@ -2508,8 +2577,10 @@ function ThreadPanel({
       .filter((mentionProfile) => getMentionSearchValue(mentionProfile).includes(query))
       .slice(0, 8);
   }, [mentionMatch, mentionProfiles]);
-  const emailCommandPreview = premiumEmail ? parseEmailSendCommand(reply) : null;
-  const lockedEmailCommand = !premiumEmail && Boolean(parseEmailSendCommand(reply));
+  const parsedEmailCommand = parseEmailSendCommand(reply);
+  const emailCommandPreview = premiumEmail ? parsedEmailCommand : null;
+  const lockedEmailCommand = !premiumEmail && Boolean(parsedEmailCommand);
+  const selectedEmailAccount = emailAccounts.find((account) => account.id === selectedEmailAccountId) ?? emailAccounts.find((account) => account.is_default) ?? emailAccounts[0];
 
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -2817,6 +2888,7 @@ function ThreadPanel({
           event.preventDefault();
           if (!reply.trim() && files.length === 0 && externalAttachments.length === 0) return;
           if (reply.length > MAX_MESSAGE_CHARACTERS) { setError(`Messages must be ${MAX_MESSAGE_CHARACTERS.toLocaleString()} characters or fewer.`); return; }
+          if (!editingComment && emailCommandPreview && !selectedEmailAccount) { setError('Connect Gmail or Microsoft 365 in Settings before sending email from a discussion.'); return; }
           setSubmitting(true);
           setError('');
           try {
@@ -2851,14 +2923,18 @@ function ThreadPanel({
           }}
         />
         {lockedEmailCommand && (
-          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email is available on an active subscription. TriCord uses your TriCord account email as the sender identity.</p>
+          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email is available on an active subscription. Start email messages with #email, then connect Gmail or Microsoft 365 in Settings.</p>
         )}
         {emailCommandPreview && (
           <div className={cn('mb-2 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
             <span className={cn('font-semibold', muted(theme))}>From</span>
-            <span className="min-w-[12rem] flex-1 rounded-md border border-inherit bg-transparent px-2 py-1 text-sm font-semibold">
-              TriCord Account · {accountSenderAddress || 'Your Sign-In Email'}
-            </span>
+            {emailAccounts.length > 0 ? (
+              <select value={selectedEmailAccount?.id ?? ''} onChange={(event) => onSelectedEmailAccountIdChange(event.target.value)} className={cn('min-w-[12rem] flex-1 rounded-md border border-inherit bg-transparent px-2 py-1 text-sm font-semibold outline-none', theme === 'dark' ? 'text-white' : 'text-[#17151D]')}>
+                {emailAccounts.map((account) => <option key={account.id} value={account.id}>{getEmailProviderLabel(account.provider)} · {account.email_address}</option>)}
+              </select>
+            ) : (
+              <button type="button" onClick={onOpenEmailSettings} className="min-w-[12rem] flex-1 rounded-md border border-inherit px-2 py-1 text-left text-sm font-semibold text-[var(--accent-strong)]">Connect Gmail or Microsoft 365</button>
+            )}
           </div>
         )}
         {editingComment && (
@@ -4400,6 +4476,88 @@ Please tell us about your team size and custom plan needs.`);
   );
 }
 
+
+function EmailIntegrationsSettings({
+  theme,
+  premiumEmail,
+  accounts,
+  busy,
+  error,
+  onConnect,
+  onSetDefault,
+  onDisconnect,
+}: {
+  theme: 'light' | 'dark';
+  premiumEmail: boolean;
+  accounts: UserEmailAccount[];
+  busy: string;
+  error: string;
+  onConnect: (provider: ConnectedEmailProvider) => Promise<void>;
+  onSetDefault: (accountId: string) => Promise<void>;
+  onDisconnect: (accountId: string) => Promise<void>;
+}) {
+  const providers: { provider: ConnectedEmailProvider; title: string; body: string }[] = [
+    { provider: 'gmail', title: 'Gmail', body: 'Send discussion emails from your connected Gmail address.' },
+    { provider: 'microsoft365', title: 'Microsoft 365 / Outlook', body: 'Send discussion emails from your connected Microsoft mailbox.' },
+  ];
+
+  return (
+    <section className={cn('rounded-lg border p-4', surface(theme))}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-bold">Connected Mailboxes</p>
+          <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Each user connects their own Gmail or Microsoft 365 mailbox. Tokens are stored encrypted, and TriCord never asks users for API keys or passwords.</p>
+        </div>
+        <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Plus and Pro</span>
+      </div>
+      {!premiumEmail && <p className="mt-4 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-sm font-semibold text-[#9A3412]">Email integrations are available on paid TriCord subscriptions.</p>}
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {providers.map((item) => (
+          <div key={item.provider} className={cn('rounded-lg border p-4', subtleButton(theme))}>
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Mail className="h-4 w-4" /></div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold">{item.title}</p>
+                <p className={cn('mt-1 text-sm leading-6', muted(theme))}>{item.body}</p>
+              </div>
+            </div>
+            <button type="button" disabled={!premiumEmail || Boolean(busy)} onClick={() => onConnect(item.provider)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)] disabled:cursor-not-allowed disabled:opacity-60">
+              {busy === item.provider && <Loader2 className="h-4 w-4 animate-spin" />}
+              Connect {item.title}
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6">
+        <p className="font-bold">Your Mailboxes</p>
+        {accounts.length === 0 ? (
+          <div className={cn('mt-3 rounded-lg border border-dashed p-5 text-sm', subtleButton(theme), muted(theme))}>No mailbox connected yet. Connect Gmail or Microsoft 365 to send email from discussion replies.</div>
+        ) : (
+          <div className="mt-3 grid gap-2">
+            {accounts.map((account) => (
+              <div key={account.id} className={cn('flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3', subtleButton(theme))}>
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">{account.display_name || account.email_address}</p>
+                  <p className={cn('truncate text-xs', muted(theme))}>{getEmailProviderLabel(account.provider)} · {account.email_address}{account.is_default ? ' · Default' : ''}</p>
+                  {account.last_error && <p className="mt-1 text-xs font-semibold text-[#B91C1C]">{account.last_error}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {!account.is_default && <button type="button" disabled={Boolean(busy)} onClick={() => onSetDefault(account.id)} className={cn('h-9 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}>Make Default</button>}
+                  <button type="button" disabled={Boolean(busy)} onClick={() => onDisconnect(account.id)} className="h-9 rounded-lg border border-[#FCA5A5] px-3 text-xs font-semibold text-[#DC2626]">Disconnect</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className={cn('mt-5 rounded-lg border p-3 text-sm leading-6', subtleButton(theme), muted(theme))}>
+        To email someone from a discussion, start your reply with <strong>#email</strong>, add recipient lines such as <strong>to:</strong>, <strong>cc:</strong>, and <strong>subj:</strong>, then leave a blank line before the message. Use <strong>@</strong> only to mention Hub members.
+      </div>
+      {error && <p className="mt-3 text-sm font-semibold text-[#B91C1C]">{error}</p>}
+    </section>
+  );
+}
+
 function SettingsModal({
   section,
   theme,
@@ -4416,8 +4574,12 @@ function SettingsModal({
   premiumEmail,
   businessModules,
   notificationPreferences,
+  emailAccounts,
   onNotificationPreferencesChange,
   onBusinessModulesChange,
+  onConnectEmail,
+  onSetDefaultEmail,
+  onDisconnectEmail,
   onUpgrade,
   onClose,
   onOpenSection,
@@ -4439,8 +4601,12 @@ function SettingsModal({
   premiumEmail: boolean;
   businessModules: BusinessModules;
   notificationPreferences: NotificationPreferences;
+  emailAccounts: UserEmailAccount[];
   onNotificationPreferencesChange: (preferences: NotificationPreferences) => void;
   onBusinessModulesChange: (modules: BusinessModules) => Promise<void>;
+  onConnectEmail: (provider: ConnectedEmailProvider) => Promise<void>;
+  onSetDefaultEmail: (accountId: string) => Promise<void>;
+  onDisconnectEmail: (accountId: string) => Promise<void>;
   onUpgrade: () => void;
   onClose: () => void;
   onOpenSection: (section: AccountModalView) => void;
@@ -4463,6 +4629,8 @@ function SettingsModal({
   const [reportError, setReportError] = useState('');
   const [moduleSavingKey, setModuleSavingKey] = useState<BusinessModuleKey | ''>('');
   const [moduleError, setModuleError] = useState('');
+  const [emailIntegrationBusy, setEmailIntegrationBusy] = useState('');
+  const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const modalTitles: Record<AccountModalView, string> = {
     personalization: 'Personalization',
@@ -4470,6 +4638,7 @@ function SettingsModal({
     settings: 'Settings',
     subscription: 'Subscription',
     notifications: 'Notifications',
+    email: 'Email Integrations',
     help: 'Help center',
     about: 'About TriCord',
     report: 'Report a problem',
@@ -4644,6 +4813,37 @@ function SettingsModal({
           </div>
         </section>}
 
+        {section === 'email' && (
+          <EmailIntegrationsSettings
+            theme={theme}
+            premiumEmail={premiumEmail}
+            accounts={emailAccounts}
+            busy={emailIntegrationBusy}
+            error={emailIntegrationError}
+            onConnect={async (provider) => {
+              setEmailIntegrationBusy(provider);
+              setEmailIntegrationError('');
+              try { await onConnectEmail(provider); }
+              catch (caughtError) { setEmailIntegrationError(getErrorMessage(caughtError)); }
+              finally { setEmailIntegrationBusy(''); }
+            }}
+            onSetDefault={async (accountId) => {
+              setEmailIntegrationBusy(accountId);
+              setEmailIntegrationError('');
+              try { await onSetDefaultEmail(accountId); }
+              catch (caughtError) { setEmailIntegrationError(getErrorMessage(caughtError)); }
+              finally { setEmailIntegrationBusy(''); }
+            }}
+            onDisconnect={async (accountId) => {
+              setEmailIntegrationBusy(accountId);
+              setEmailIntegrationError('');
+              try { await onDisconnectEmail(accountId); }
+              catch (caughtError) { setEmailIntegrationError(getErrorMessage(caughtError)); }
+              finally { setEmailIntegrationBusy(''); }
+            }}
+          />
+        )}
+
         {section === 'notifications' && <section className={cn('rounded-lg border p-4', surface(theme))}>
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Bell className="h-4 w-4" /></div>
@@ -4674,6 +4874,11 @@ function SettingsModal({
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Plan</p>
               <p className="mt-2 text-lg font-bold">{formatSubscriptionStatusLabel(workspace)}</p>
               <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Your current TriCord account includes the core Hub, Room, feed, task, and knowledge features.</p>
+            </section>
+            <section className={cn('rounded-lg border p-4', surface(theme))}>
+              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Email Integrations</p>
+              <p className={cn('mt-2 text-sm leading-6', muted(theme))}>Connect your Gmail or Microsoft 365 mailbox so discussion replies can send email from your own address.</p>
+              <button type="button" onClick={() => onOpenSection('email')} className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Mail className="h-4 w-4" />Manage Email</button>
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub access</p>
@@ -4758,7 +4963,7 @@ function SettingsModal({
             <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
-            <HelpTopic title="Email Features" body="Forward email into a Room using its Room email address, or send outbound email from a discussion with metadata lines such as to:, cc:, bcc:, and subj:. The @ symbol is reserved for tagging people in the Hub." theme={theme} />
+            <HelpTopic title="Email Features" body="Connect Gmail or Microsoft 365 in Settings, then start a discussion reply with #email or #mail. Add recipient lines such as to:, cc:, bcc:, and subj:, leave a blank line, then write the message. The @ symbol is only for tagging Hub members." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage the Hub subscription, promo codes, taxes, renewal terms, and payment methods through Stripe Checkout or the billing portal. Standard Hub pricing includes up to 25 employees; larger teams should contact TriCord for a custom plan." theme={theme} />
@@ -6281,14 +6486,23 @@ function getMentionSearchValue(profile: AppProfile) {
     .toLowerCase();
 }
 
+
+function getEmailProviderLabel(provider: string) {
+  if (provider === 'gmail') return 'Gmail';
+  if (provider === 'outlook' || provider === 'microsoft365') return 'Microsoft 365';
+  return 'Email';
+}
+
 function parseEmailSendCommand(value: string) {
   const raw = value.trim();
-  if (!/^to:/im.test(raw) && !/^cc:/im.test(raw) && !/^subj(?:ect)?:/im.test(raw)) return null;
+  if (!raw) return null;
   const lines = raw.split(/\r?\n/);
+  if (!/^#(?:email|mail)\b/i.test(lines[0] ?? '')) return null;
+  const commandLines = lines.slice(1);
   const metadata: Record<string, string[]> = { to: [], cc: [], bcc: [], subj: [] };
   const bodyLines: string[] = [];
   let inMetadata = true;
-  for (const line of lines) {
+  for (const line of commandLines) {
     const match = inMetadata ? line.match(/^\s*(to|cc|bcc|subj|subject):\s*(.*)$/i) : null;
     if (match) {
       const key = match[1].toLowerCase() === 'subject' ? 'subj' : match[1].toLowerCase();

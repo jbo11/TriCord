@@ -84,21 +84,41 @@ Deno.serve(async (request) => {
 
     const { data: room, error: roomError } = await adminClient
       .from('spaces')
-      .select('id, name, email_alias')
+      .select('id, name')
       .eq('id', post.space_id)
       .maybeSingle();
     if (roomError || !room) return json({ error: 'Room not found.' }, 404);
 
     const userIdentity = await loadUserIdentity(adminClient, authData.user.id, authData.user.email || '');
     const identity = await selectSenderIdentity(adminClient, workspaceId, authData.user.id, input.providerAccountId || '', userIdentity.email);
-    auditBase = { workspace_id: workspaceId, post_id: postId, user_id: authData.user.id, provider: identity.provider, sender: identity.sender, reply_to: identity.replyTo, recipient: to, cc, bcc, subject };
+    auditBase = { workspace_id: workspaceId, post_id: postId, user_id: authData.user.id, account_id: identity.accountId, provider: identity.provider, sender: identity.sender, reply_to: identity.replyTo, recipient: to, cc, bcc, subject };
 
     const result = await sendWithProvider(userClient, identity, { to, cc, bcc, subject: subject || `Re: ${post.title}`, text: body });
     await adminClient.from('email_delivery_logs').insert({ ...auditBase, status: 'sent', message_id: result.messageId ?? null });
+    await logIntegrationEvent(adminClient, {
+      workspaceId,
+      userId: authData.user.id,
+      accountId: identity.accountId,
+      provider: identity.provider,
+      eventType: 'outgoing_sent',
+      status: 'ok',
+      metadata: { post_id: postId, recipient: to, cc, bcc, subject, message_id: result.messageId ?? null },
+    });
     return json({ ok: true, provider: identity.provider, sender: identity.sender, id: result.messageId ?? null });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Email could not be sent.';
-    if (auditBase) await adminClient.from('email_delivery_logs').insert({ ...auditBase, status: 'failed', error_message: message });
+    if (auditBase) {
+      await adminClient.from('email_delivery_logs').insert({ ...auditBase, status: 'failed', error_message: message });
+      await logIntegrationEvent(adminClient, {
+        workspaceId: String(auditBase.workspace_id),
+        userId: String(auditBase.user_id),
+        accountId: typeof auditBase.account_id === 'string' ? auditBase.account_id : null,
+        provider: String(auditBase.provider),
+        eventType: 'outgoing_failed',
+        status: 'error',
+        metadata: { post_id: auditBase.post_id, recipient: auditBase.recipient, cc: auditBase.cc, bcc: auditBase.bcc, subject: auditBase.subject, error_message: message },
+      });
+    }
     return json({ error: friendlyEmailError(message) }, 400);
   }
 });
@@ -226,7 +246,7 @@ async function refreshGoogleToken(refreshToken: string) {
 }
 
 async function refreshMicrosoftToken(refreshToken: string) {
-  const tenant = Deno.env.get('MICROSOFT_OAUTH_TENANT') || 'common';
+  const tenant = Deno.env.get('MICROSOFT_OAUTH_TENANT') || Deno.env.get('MICROSOFT_TENANT_ID') || 'common';
   const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -264,8 +284,21 @@ function encodeBase64Url(value: string) {
   return btoa(unescape(encodeURIComponent(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
+async function logIntegrationEvent(adminClient: ReturnType<typeof createClient>, input: { workspaceId: string; userId?: string | null; accountId?: string | null; provider: string; eventType: string; status: 'ok' | 'error'; metadata?: Record<string, unknown> }) {
+  const { error } = await adminClient.from('email_integration_events').insert({
+    workspace_id: input.workspaceId,
+    user_id: input.userId ?? null,
+    account_id: input.accountId ?? null,
+    provider: input.provider,
+    event_type: input.eventType,
+    status: input.status,
+    metadata: input.metadata ?? {},
+  });
+  if (error) console.warn('email integration audit failed', error.message);
+}
+
 function formatSender(identity: SenderIdentity) {
-  const displayName = identity.displayName || 'TriCord Room';
+  const displayName = identity.displayName || 'TriCord';
   if (identity.sender.includes('<')) return identity.sender;
   return `${displayName.replace(/[<>]/g, '')} <${identity.sender}>`;
 }

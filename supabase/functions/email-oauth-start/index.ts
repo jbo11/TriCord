@@ -32,20 +32,22 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!membership) return json({ error: 'You do not have access to this Hub.' }, 403);
 
+    const codeVerifier = randomToken(64);
+    const codeChallenge = await pkceChallenge(codeVerifier);
     const { data: stateRow, error: stateError } = await client
       .from('email_oauth_states')
-      .insert({ workspace_id: workspaceId, user_id: authData.user.id, provider })
+      .insert({ workspace_id: workspaceId, user_id: authData.user.id, provider, code_verifier: codeVerifier })
       .select('id')
       .single();
     if (stateError || !stateRow) return json({ error: stateError?.message || 'Could not start email connection.' }, 400);
 
-    return json({ authUrl: buildAuthUrl(provider, stateRow.id) });
+    return json({ authUrl: buildAuthUrl(provider, stateRow.id, codeChallenge) });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Could not start email connection.' }, 400);
   }
 });
 
-function buildAuthUrl(provider: Provider, state: string) {
+function buildAuthUrl(provider: Provider, state: string, codeChallenge: string) {
   const redirectUri = oauthRedirectUri();
   if (provider === 'gmail') {
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -54,20 +56,41 @@ function buildAuthUrl(provider: Provider, state: string) {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
-    url.searchParams.set('scope', 'openid email profile https://www.googleapis.com/auth/gmail.send');
+    url.searchParams.set('scope', 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send');
+    url.searchParams.set('code_challenge', codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('state', state);
     return url.toString();
   }
 
-  const tenant = Deno.env.get('MICROSOFT_OAUTH_TENANT') || 'common';
+  const tenant = Deno.env.get('MICROSOFT_OAUTH_TENANT') || Deno.env.get('MICROSOFT_TENANT_ID') || 'common';
   const url = new URL(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`);
   url.searchParams.set('client_id', requiredEnv('MICROSOFT_OAUTH_CLIENT_ID'));
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('response_mode', 'query');
-  url.searchParams.set('scope', 'openid email profile offline_access User.Read Mail.Send');
+  url.searchParams.set('scope', 'openid email profile offline_access User.Read Mail.Read Mail.Send');
+  url.searchParams.set('code_challenge', codeChallenge);
+  url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('state', state);
   return url.toString();
+}
+
+async function pkceChallenge(verifier: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+function randomToken(byteLength: number) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+function base64UrlEncode(bytes: Uint8Array) {
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function oauthRedirectUri() {

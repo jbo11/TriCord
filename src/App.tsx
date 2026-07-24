@@ -423,6 +423,23 @@ function playNotificationTone() {
   }
 }
 
+function showDesktopNotification(title: string, options: NotificationOptions = {}) {
+  if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') return false;
+  try {
+    const assetBase = PUBLIC_ASSET_BASE.replace(/\/$/, '');
+    const notificationOptions: NotificationOptions & { renotify?: boolean } = {
+      icon: `${assetBase}/tricord-logo.png`,
+      badge: `${assetBase}/favicon.ico`,
+      renotify: true,
+      ...options,
+    };
+    new Notification(title, notificationOptions);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [accentColor, setAccentColor] = useState<AccentColor>(getInitialAccentColor);
@@ -480,6 +497,12 @@ export default function App() {
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
   const previousUnreadCountRef = useRef(0);
+  const [onlineStatuses, setOnlineStatuses] = useState<Record<string, { status: 'active' | 'idle'; at: number }>>({});
+  const [typingByPost, setTypingByPost] = useState<Record<string, Record<string, number>>>({});
+  const activityLastSeenRef = useRef(Date.now());
+  const lastPresenceStatusRef = useRef('');
+  const lastPresenceBroadcastAtRef = useRef(0);
+  const taskReminderKeysRef = useRef<Set<string>>(new Set());
 
   const spaceIdsKey = spaces.map((space) => space.id).join(',');
 
@@ -527,12 +550,22 @@ export default function App() {
       .sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [memberships, profiles],
   );
+  const selectedTypingProfiles = useMemo(() => {
+    if (!selectedPost?.id) return [];
+    const now = Date.now();
+    return Object.entries((typingByPost[selectedPost.id] ?? {}) as Record<string, number>)
+      .filter(([userId, until]) => userId !== session?.user.id && until > now)
+      .map(([userId]) => profiles[userId])
+      .filter((profile): profile is AppProfile => Boolean(profile))
+      .sort((a, b) => getProfileName(a).localeCompare(getProfileName(b)));
+  }, [profiles, selectedPost?.id, session?.user.id, typingByPost]);
   const billableSeatCount = useMemo(
     () => Math.max(memberships.filter((membership) => membership.role !== 'guest').length, 1),
     [memberships],
   );
   const notificationPrefsKey = session?.user.id ? getNotificationPreferenceKey(session.user.id) : '';
   const unreadSeenKey = session?.user.id && workspaceId ? getUnreadSeenKey(session.user.id, workspaceId) : '';
+  const isViewingActiveDiscussion = view === 'feed' && chatOpen && Boolean(selectedPostId);
   const unreadActivityCount = useMemo(() => {
     if (!session?.user.id || !workspaceId || !lastSeenActivityAt) return 0;
     const cutoff = Date.parse(lastSeenActivityAt);
@@ -548,11 +581,24 @@ export default function App() {
     const postCount = notificationPreferences.announcements
       ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.created_at) > cutoff).length
       : 0;
+    const activePostUpdateCount = notificationPreferences.directMessages
+      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId)).length
+      : 0;
     const assignedTaskCount = notificationPreferences.taskAssignments
       ? tasks.filter((task) => task.assignee_id === currentUserId && Date.parse(task.created_at) > cutoff).length
       : 0;
-    return commentCount + mentionCount + postCount + assignedTaskCount;
-  }, [comments, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, session?.user.id, tasks, workspaceId]);
+    return Math.max(commentCount + mentionCount, activePostUpdateCount) + postCount + assignedTaskCount;
+  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks, workspaceId]);
+  const unreadPostIds = useMemo(() => {
+    if (!session?.user.id || !lastSeenActivityAt) return new Set<string>();
+    const cutoff = Date.parse(lastSeenActivityAt);
+    if (!Number.isFinite(cutoff)) return new Set<string>();
+    return new Set(
+      posts
+        .filter((post) => Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId))
+        .map((post) => post.id),
+    );
+  }, [isViewingActiveDiscussion, lastSeenActivityAt, posts, selectedPostId, session?.user.id]);
 
   const markWorkspaceActivitySeen = useCallback(() => {
     if (!unreadSeenKey || typeof window === 'undefined') return;
@@ -673,8 +719,6 @@ export default function App() {
     setLastSeenActivityAt(initialSeenAt);
   }, [unreadSeenKey]);
 
-  const isViewingActiveDiscussion = view === 'feed' && chatOpen && Boolean(selectedPostId);
-
   useEffect(() => {
     if (!unreadSeenKey) return;
     const markVisible = () => {
@@ -702,13 +746,82 @@ export default function App() {
 
   useEffect(() => {
     if (unreadActivityCount > previousUnreadCountRef.current && document.visibilityState === 'hidden') {
-      if (notificationPreferences.desktop && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('TriCord update', { body: `${unreadActivityCount} unread update${unreadActivityCount === 1 ? '' : 's'}` });
-      }
+      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${unreadActivityCount} unread update${unreadActivityCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
       if (notificationPreferences.sound) playNotificationTone();
     }
     previousUnreadCountRef.current = unreadActivityCount;
   }, [notificationPreferences.desktop, notificationPreferences.sound, unreadActivityCount]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setTypingByPost((current) => {
+        const now = Date.now();
+        let changed = false;
+        const next: Record<string, Record<string, number>> = {};
+        Object.entries(current).forEach(([postId, users]) => {
+          const activeUsers = Object.fromEntries(Object.entries(users).filter(([, until]) => until > now));
+          if (Object.keys(activeUsers).length > 0) next[postId] = activeUsers;
+          if (Object.keys(activeUsers).length !== Object.keys(users).length) changed = true;
+        });
+        return changed ? next : current;
+      });
+    }, 2000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user.id || !workspaceId) return;
+    const setOwnPresence = (status: 'active' | 'idle') => {
+      const at = Date.now();
+      setOnlineStatuses((current) => ({ ...current, [session.user.id]: { status, at } }));
+      const shouldSend = lastPresenceStatusRef.current !== status || at - lastPresenceBroadcastAtRef.current > 25000;
+      if (!shouldSend) return;
+      lastPresenceStatusRef.current = status;
+      lastPresenceBroadcastAtRef.current = at;
+      void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'presence_status', payload: { workspaceId, userId: session.user.id, status, at } });
+    };
+    const markActive = () => { activityLastSeenRef.current = Date.now(); setOwnPresence('active'); };
+    const events = ['pointerdown', 'keydown', 'mousemove', 'touchstart', 'scroll'];
+    events.forEach((eventName) => window.addEventListener(eventName, markActive, { passive: true }));
+    const intervalId = window.setInterval(() => {
+      setOwnPresence(Date.now() - activityLastSeenRef.current >= 120000 ? 'idle' : 'active');
+      setOnlineStatuses((current) => {
+        const now = Date.now();
+        const next = Object.fromEntries(
+          (Object.entries(current) as Array<[string, { status: 'active' | 'idle'; at: number }]>)
+            .filter(([, value]) => now - value.at < 180000),
+        ) as Record<string, { status: 'active' | 'idle'; at: number }>;
+        return Object.keys(next).length === Object.keys(current).length ? current : next;
+      });
+    }, 15000);
+    markActive();
+    return () => {
+      events.forEach((eventName) => window.removeEventListener(eventName, markActive));
+      window.clearInterval(intervalId);
+      void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'presence_status', payload: { workspaceId, userId: session.user.id, status: 'idle', at: Date.now() } });
+    };
+  }, [session?.user.id, workspaceId]);
+
+  useEffect(() => {
+    if (!session?.user.id || notificationPreferences.desktop !== true || notificationPreferences.taskAssignments !== true) return;
+    const checkTaskReminders = () => {
+      const now = Date.now();
+      tasks.forEach((task) => {
+        if (task.assignee_id !== session.user.id || task.archived_at || task.status === 'done' || task.status === 'canceled') return;
+        const dueTime = task.due_at ? Date.parse(task.due_at) : NaN;
+        const reminderTime = task.reminder_at ? Date.parse(task.reminder_at) : NaN;
+        const shouldRemind = (Number.isFinite(reminderTime) && reminderTime <= now) || (Number.isFinite(dueTime) && dueTime <= now + 15 * 60 * 1000 && dueTime >= now - 60 * 1000);
+        const key = `${task.id}:${task.updated_at}:${task.reminder_at ?? ''}:${task.due_at ?? ''}`;
+        if (!shouldRemind || taskReminderKeysRef.current.has(key)) return;
+        taskReminderKeysRef.current.add(key);
+        showDesktopNotification('TriCord Task Reminder', { body: task.due_at ? `${task.title} is due ${formatTaskDate(task.due_at)}.` : task.title, tag: `tricord-task-${task.id}` });
+        if (notificationPreferences.sound) playNotificationTone();
+      });
+    };
+    checkTaskReminders();
+    const intervalId = window.setInterval(checkTaskReminders, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [notificationPreferences.desktop, notificationPreferences.sound, notificationPreferences.taskAssignments, session?.user.id, tasks]);
 
   useEffect(() => {
     const toggleDiscussionPanel = (event: KeyboardEvent) => {
@@ -839,7 +952,7 @@ export default function App() {
         .limit(80),
       supabase
         .from('tasks')
-        .select('id, workspace_id, post_id, title, description, project_name, priority, tags, assignee_id, created_by, status, due_at, archived_at, created_at, updated_at')
+        .select('id, workspace_id, post_id, title, description, project_name, priority, tags, assignee_id, created_by, status, due_at, reminder_at, recurrence_rule, recurrence_custom, archived_at, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
         .is('archived_at', null)
         .order('created_at', { ascending: false })
@@ -1123,6 +1236,23 @@ export default function App() {
       })
       .on('broadcast', { event: 'posts_changed' }, () => {
         void loadWorkspaceData(workspaceId, true);
+      })
+      .on('broadcast', { event: 'presence_status' }, ({ payload }) => {
+        const userId = String(payload?.userId ?? '');
+        const status = payload?.status === 'idle' ? 'idle' : 'active';
+        if (!userId || userId === session.user.id) return;
+        setOnlineStatuses((current) => ({ ...current, [userId]: { status, at: Number(payload?.at) || Date.now() } }));
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        const postId = String(payload?.postId ?? '');
+        const userId = String(payload?.userId ?? '');
+        if (!postId || !userId || userId === session.user.id) return;
+        setTypingByPost((current) => {
+          const nextPost = { ...(current[postId] ?? {}) };
+          if (payload?.isTyping) nextPost[userId] = Date.now() + 4500;
+          else delete nextPost[userId];
+          return { ...current, [postId]: nextPost };
+        });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'spaces', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
@@ -1422,6 +1552,8 @@ export default function App() {
                               post={post}
                               selected={selectedPost?.id === post.id}
                               profile={profiles[post.author_id]}
+                              profileStatus={post.author_id ? onlineStatuses[post.author_id]?.status : undefined}
+                              unread={unreadPostIds.has(post.id)}
                               theme={theme}
                               space={spaces.find((item) => item.id === post.space_id)}
                               members={memberProfiles}
@@ -1574,6 +1706,8 @@ export default function App() {
               recentPosts={posts.filter((item) => item.state === 'open' && item.id !== selectedPost?.id)}
               profiles={profiles}
               mentionProfiles={hubMentionProfiles}
+              typingProfiles={selectedTypingProfiles}
+              onlineStatuses={onlineStatuses}
               theme={theme}
               currentUserId={session.user.id}
               canManage={canManageAdmin}
@@ -1624,6 +1758,10 @@ export default function App() {
                 await deleteComment(commentId);
                 void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId: selectedPost.id } });
                 await loadComments(selectedPost.id);
+              }}
+              onTyping={(isTyping) => {
+                if (!selectedPost || !session.user) return;
+                void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { workspaceId, postId: selectedPost.id, userId: session.user.id, isTyping } });
               }}
               onForward={async (messageIds, targetPostIds) => {
                 if (!selectedPost || !session.user) return;
@@ -1719,9 +1857,9 @@ export default function App() {
           profiles={memberProfiles}
           draftKey={getFormDraftKey('task', session.user.id, workspaceId)}
           onClose={() => setTaskModalOpen(false)}
-          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
+          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt, reminderAt, recurrenceRule, recurrenceCustom }) => {
             if (!session.user) return;
-            await createTask(workspaceId, session.user.id, { title, description, projectName, priority, tags, assigneeId, dueAt });
+            await createTask(workspaceId, session.user.id, { title, description, projectName, priority, tags, assigneeId, dueAt, reminderAt, recurrenceRule, recurrenceCustom });
             setTaskModalOpen(false);
             await loadWorkspaceData(workspaceId, true);
           }}
@@ -1735,8 +1873,8 @@ export default function App() {
           task={editingTask}
           draftKey={getFormDraftKey('task', session.user.id, workspaceId, editingTask.id)}
           onClose={() => setEditingTask(null)}
-          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
-            await updateTask(editingTask.id, { title, description, projectName, priority, tags, assigneeId, dueAt });
+          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt, reminderAt, recurrenceRule, recurrenceCustom }) => {
+            await updateTask(editingTask.id, { title, description, projectName, priority, tags, assigneeId, dueAt, reminderAt, recurrenceRule, recurrenceCustom });
             setEditingTask(null);
             await loadWorkspaceData(workspaceId, true);
           }}
@@ -2384,6 +2522,8 @@ function PostRow({
   post,
   selected,
   profile,
+  profileStatus,
+  unread,
   theme,
   space,
   members,
@@ -2397,6 +2537,8 @@ function PostRow({
   post: AppPost;
   selected: boolean;
   profile?: AppProfile;
+  profileStatus?: 'active' | 'idle';
+  unread: boolean;
   theme: 'light' | 'dark';
   space?: AppSpace;
   members: AppProfile[];
@@ -2415,18 +2557,25 @@ function PostRow({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onClick();
       }}
-      className={cn('w-full rounded-lg border p-4 text-left transition', selected ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15' : surface(theme))}
+      className={cn(
+        'w-full rounded-lg border p-4 text-left transition',
+        selected
+          ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15'
+          : surface(theme),
+        unread && !selected && 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm shadow-[var(--accent-strong)]/10',
+      )}
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill state={post.state} />
         {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#B8B3C2]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
+        {unread && <span className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-xs font-bold text-[var(--accent-ink)]">New</span>}
         <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
       </div>
       <h2 className="mt-3 text-lg font-bold tracking-tight">{post.title}</h2>
       <p className={cn('mt-2 line-clamp-2 text-sm leading-6', muted(theme))}>{post.body}</p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <Avatar profile={profile} />
+          <Avatar profile={profile} status={profileStatus} />
           <span className="truncate text-sm font-semibold">{getProfileName(profile)}</span>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -2518,6 +2667,9 @@ function ThreadPanel({
   onReact,
   onEditComment,
   onDeleteComment,
+  onTyping,
+  typingProfiles,
+  onlineStatuses,
   onForward,
 }: {
   post?: AppPost;
@@ -2528,6 +2680,8 @@ function ThreadPanel({
   recentPosts: AppPost[];
   profiles: Record<string, AppProfile>;
   mentionProfiles: AppProfile[];
+  typingProfiles: AppProfile[];
+  onlineStatuses: Record<string, { status: 'active' | 'idle'; at: number }>;
   theme: 'light' | 'dark';
   currentUserId: string;
   canManage: boolean;
@@ -2545,6 +2699,7 @@ function ThreadPanel({
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onEditComment: (commentId: string, body: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
+  onTyping: (isTyping: boolean) => void;
   onForward: (messageIds: string[], targetPostIds: string[]) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
@@ -2823,6 +2978,7 @@ function ThreadPanel({
               reactions={reactions.filter((reaction) => reaction.post_id === post.id && !reaction.comment_id)}
               currentUserId={currentUserId}
               mentionProfiles={mentionProfiles}
+              profileStatus={profile?.id ? onlineStatuses[profile.id]?.status : undefined}
               onReply={() => { setReplyingTo(null); textareaRef.current?.focus(); }}
               onReact={(emoji) => onReact(null, emoji)}
               onForward={() => beginForward(post.id)}
@@ -2844,6 +3000,7 @@ function ThreadPanel({
                   reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
                   currentUserId={currentUserId}
                   mentionProfiles={mentionProfiles}
+                  profileStatus={comment.author_id ? onlineStatuses[comment.author_id]?.status : undefined}
                   preferMenuAbove
                   parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
                   onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
@@ -2862,6 +3019,7 @@ function ThreadPanel({
               </div>
             </div>
           ))}
+          {typingProfiles.length > 0 && <TypingIndicator profiles={typingProfiles} theme={theme} />}
           <div ref={latestMessageRef} />
         </div>
       </div>
@@ -2904,6 +3062,7 @@ function ThreadPanel({
             setExternalAttachments([]);
             setReplyingTo(null);
             setEditingComment(null);
+            onTyping(false);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -2923,7 +3082,7 @@ function ThreadPanel({
           }}
         />
         {lockedEmailCommand && (
-          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email is available on an active subscription. Start email messages with #email, then connect Gmail or Microsoft 365 in Settings.</p>
+          <p className="mb-2 rounded-lg border border-[#FDBA74] bg-[#FFF7ED] px-3 py-2 text-xs font-semibold text-[#9A3412]">Outgoing email is available on an active subscription. Start email messages with a to: line, then connect Gmail or Microsoft 365 in Settings.</p>
         )}
         {emailCommandPreview && (
           <div className={cn('mb-2 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
@@ -2968,6 +3127,7 @@ function ThreadPanel({
           onChange={(event) => {
             setReply(event.target.value);
             updateMentionMatch(event.target.value, event.target.selectionStart);
+            onTyping(Boolean(event.target.value.trim()));
           }}
           onClick={(event) => updateMentionMatch(reply, event.currentTarget.selectionStart)}
           onKeyUp={(event) => {
@@ -3017,7 +3177,7 @@ function ThreadPanel({
           onPaste={(event) => {
             if (addPastedImages(event.clipboardData.files)) event.preventDefault();
           }}
-          onBlur={() => window.setTimeout(() => setMentionMatch(null), 120)}
+          onBlur={() => { window.setTimeout(() => setMentionMatch(null), 120); onTyping(false); }}
           placeholder="Reply to this post"
           className={cn('min-h-24 max-h-[40dvh] w-full resize-y overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
         />
@@ -3111,6 +3271,21 @@ function ThreadPanel({
 }
 
 
+function TypingIndicator({ profiles, theme }: { profiles: AppProfile[]; theme: 'light' | 'dark' }) {
+  const names = profiles.slice(0, 3).map((profile) => getProfileName(profile)).join(', ');
+  const suffix = profiles.length > 3 ? ` and ${profiles.length - 3} more` : '';
+  return (
+    <div className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold', subtleButton(theme))}>
+      <span>{names}{suffix} {profiles.length === 1 ? 'is' : 'are'} typing</span>
+      <span className="flex items-center gap-1" aria-hidden="true">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+      </span>
+    </div>
+  );
+}
+
 function MentionSuggestions({ theme, profiles, activeIndex, onSelect }: { theme: 'light' | 'dark'; profiles: AppProfile[]; activeIndex: number; onSelect: (profile: AppProfile) => void }) {
   return (
     <div className={cn('mb-2 max-h-60 overflow-y-auto rounded-lg border p-1 shadow-2xl scroll-area', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-white')}>
@@ -3139,7 +3314,7 @@ function MentionSuggestions({ theme, profiles, activeIndex, onSelect }: { theme:
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, mentionProfiles, preferMenuAbove = false, parentComment, onReply, onReact, onForward, onEdit, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; mentionProfiles: AppProfile[]; preferMenuAbove?: boolean; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onEdit?: () => void; onDelete?: () => Promise<void> }) {
+function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, mentionProfiles, preferMenuAbove = false, parentComment, onReply, onReact, onForward, onEdit, onDelete }: { profile?: AppProfile; profileStatus?: 'active' | 'idle'; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; mentionProfiles: AppProfile[]; preferMenuAbove?: boolean; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onEdit?: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -3168,7 +3343,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
   return (
     <div className={cn('relative rounded-lg border p-4', surface(theme))}>
       <div className="mb-3 flex items-center gap-3">
-        <Avatar profile={profile} />
+        <Avatar profile={profile} status={profileStatus} />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{getProfileName(profile)}</p>
         </div>
@@ -3637,7 +3812,7 @@ function TasksView({
         <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New task</button>
       </div>
       {tasks.length === 0 ? <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create the first task to start planning hub projects." actionLabel="Create task" onAction={onCreateTask} /> : mode === 'board' ? (
-        <TaskBoard tasks={filteredTasks} profiles={profiles} theme={theme} onCreateTask={onCreateTask} onStatusChange={onStatusChange} />
+        <TaskBoard tasks={filteredTasks} profiles={profiles} theme={theme} canManageTaskActions={canManageTaskActions} onCreateTask={onCreateTask} onEditTask={onEditTask} onDeleteTask={onDeleteTask} onStatusChange={onStatusChange} onArchiveTask={onArchiveTask} />
       ) : mode === 'list' ? (
         <TaskList tasks={filteredTasks} profiles={profiles} theme={theme} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} priorityFilter={priorityFilter} setPriorityFilter={setPriorityFilter} canManageTaskActions={canManageTaskActions} onStatusChange={onStatusChange} onEditTask={onEditTask} onDeleteTask={onDeleteTask} onArchiveTask={onArchiveTask} />
       ) : (
@@ -3655,7 +3830,7 @@ const taskColumns: { status: TaskStatus; label: string; dot: string }[] = [
   { status: 'canceled', label: 'Canceled', dot: 'bg-[#EF4444]' },
 ];
 
-function TaskBoard({ tasks, profiles, theme, onCreateTask, onStatusChange }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark'; onCreateTask: () => void; onStatusChange: (taskId: string, status: TaskStatus) => Promise<void> }) {
+function TaskBoard({ tasks, profiles, theme, canManageTaskActions, onCreateTask, onEditTask, onDeleteTask, onStatusChange, onArchiveTask }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark'; canManageTaskActions: boolean; onCreateTask: () => void; onEditTask: (task: AppTask) => void; onDeleteTask: (task: AppTask) => Promise<void>; onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>; onArchiveTask: (task: AppTask) => Promise<void> }) {
   return (
     <div className="min-h-0 overflow-x-auto pb-3 scroll-area">
       <div className="grid min-w-max grid-flow-col auto-cols-[280px] gap-4">
@@ -3665,9 +3840,9 @@ function TaskBoard({ tasks, profiles, theme, onCreateTask, onStatusChange }: { t
             <div className="mb-3 flex items-center gap-2 px-1"><span className={cn('h-2.5 w-2.5 rounded-full', column.dot)} /><h3 className="text-sm font-bold">{column.label}</h3><span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]', muted(theme))}>{columnTasks.length}</span></div>
             <div className="space-y-3">
               {columnTasks.map((task) => <div key={task.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/tricord-task', task.id); }} className={cn('cursor-grab rounded-lg border p-4 shadow-sm active:cursor-grabbing', surface(theme))}>
-                <p className="font-semibold">{task.title}</p>{task.description && <p className={cn('mt-1 line-clamp-2 text-xs leading-5', muted(theme))}>{task.description}</p>}
+                <div className="flex items-start gap-2"><p className="min-w-0 flex-1 font-semibold">{task.title}</p>{canManageTaskActions && <div className="flex shrink-0 gap-1"><button type="button" aria-label="Edit task" title="Edit task" onClick={() => onEditTask(task)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><Pencil className="h-3.5 w-3.5" /></button><button type="button" aria-label="Delete task" title="Delete task" onClick={() => void onDeleteTask(task)} className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#FCA5A5] text-[#B91C1C]"><Trash2 className="h-3.5 w-3.5" /></button></div>}</div>{task.description && <p className={cn('mt-1 line-clamp-2 text-xs leading-5', muted(theme))}>{task.description}</p>}
                 <div className="mt-3 flex flex-wrap gap-1.5"><PriorityPill priority={task.priority ?? 'medium'} />{(task.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className={cn('rounded-full px-2 py-1 text-[11px]', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]')}>{tag}</span>)}</div>
-                <div className="mt-4 flex items-center gap-2"><Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} /><span className={cn('min-w-0 flex-1 truncate text-xs', muted(theme))}>{task.project_name || 'General project'}</span>{task.due_at && <span className={cn('text-[11px]', muted(theme))}>{formatTaskDate(task.due_at)}</span>}</div>
+                <div className="mt-4 flex items-center gap-2"><Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} /><span className={cn('min-w-0 flex-1 truncate text-xs', muted(theme))}>{task.project_name || 'General project'}</span>{task.due_at && <span className={cn('text-[11px]', muted(theme))}>{formatTaskDate(task.due_at)}</span>}</div>{(task.status === 'done' || task.status === 'canceled') && <button type="button" onClick={() => void onArchiveTask(task)} className={cn('mt-3 inline-flex h-8 items-center gap-2 rounded-md border px-2 text-xs font-semibold', subtleButton(theme))}><Archive className="h-3.5 w-3.5" />Archive</button>}
               </div>)}
               <button onClick={onCreateTask} className={cn('inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-dashed text-sm', muted(theme))}><Plus className="h-4 w-4" />Add task</button>
             </div>
@@ -4312,7 +4487,7 @@ function TaskModal({
   task?: AppTask;
   draftKey: string;
   onClose: () => void;
-  onCreate: (input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string }) => Promise<void>;
+  onCreate: (input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string; reminderAt: string; recurrenceRule: 'none' | 'daily' | 'weekly' | 'monthly' | 'custom'; recurrenceCustom: string }) => Promise<void>;
 }) {
   const initialDraft = useMemo(() => ({
     title: task?.title ?? '',
@@ -4321,7 +4496,10 @@ function TaskModal({
     priority: task?.priority ?? ('medium' as TaskPriority),
     tags: (task?.tags ?? []).join(', '),
     assigneeId: task?.assignee_id ?? '',
-    dueAt: task?.due_at ? task.due_at.slice(0, 10) : '',
+    dueAt: task?.due_at ? toDateTimeLocalInputValue(task.due_at) : '',
+    reminderAt: task?.reminder_at ? toDateTimeLocalInputValue(task.reminder_at) : '',
+    recurrenceRule: task?.recurrence_rule ?? ('none' as const),
+    recurrenceCustom: task?.recurrence_custom ?? '',
   }), [task?.assignee_id, task?.description, task?.due_at, task?.priority, task?.project_name, task?.tags, task?.title]);
   const [draft, setDraft, clearDraft] = usePersistentDraft(draftKey, initialDraft);
   const title = draft.title;
@@ -4331,6 +4509,9 @@ function TaskModal({
   const tags = draft.tags;
   const assigneeId = draft.assigneeId;
   const dueAt = draft.dueAt;
+  const reminderAt = draft.reminderAt;
+  const recurrenceRule = draft.recurrenceRule;
+  const recurrenceCustom = draft.recurrenceCustom;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -4344,7 +4525,7 @@ function TaskModal({
           setSubmitting(true);
           setError('');
           try {
-            await onCreate({ title: title.trim(), description: description.trim(), projectName: projectName.trim(), priority, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8), assigneeId, dueAt });
+            await onCreate({ title: title.trim(), description: description.trim(), projectName: projectName.trim(), priority, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8), assigneeId, dueAt, reminderAt, recurrenceRule, recurrenceCustom: recurrenceCustom.trim() });
             clearDraft();
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
@@ -4379,10 +4560,15 @@ function TaskModal({
             </select>
           </label>
           <label className="grid gap-2 text-sm font-semibold">
-            Due date
-            <input type="date" value={dueAt} onChange={(event) => setDraft((current) => ({ ...current, dueAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            Due Date And Time
+            <input type="datetime-local" value={dueAt} onChange={(event) => setDraft((current) => ({ ...current, dueAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
           </label>
         </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2 text-sm font-semibold">Reminder<input type="datetime-local" value={reminderAt} onChange={(event) => setDraft((current) => ({ ...current, reminderAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+          <label className="grid gap-2 text-sm font-semibold">Recurring<select value={recurrenceRule} onChange={(event) => setDraft((current) => ({ ...current, recurrenceRule: event.target.value as typeof recurrenceRule }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="none">Does Not Repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+        </div>
+        {recurrenceRule === 'custom' && <label className="grid gap-2 text-sm font-semibold">Custom Schedule<input value={recurrenceCustom} onChange={(event) => setDraft((current) => ({ ...current, recurrenceCustom: event.target.value }))} placeholder="Example: every weekday, every 2 weeks" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>}
         <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {task ? 'Save task' : 'Create task'}
@@ -4551,7 +4737,7 @@ function EmailIntegrationsSettings({
         )}
       </div>
       <div className={cn('mt-5 rounded-lg border p-3 text-sm leading-6', subtleButton(theme), muted(theme))}>
-        To email someone from a discussion, start your reply with <strong>#email</strong>, add recipient lines such as <strong>to:</strong>, <strong>cc:</strong>, and <strong>subj:</strong>, then leave a blank line before the message. Use <strong>@</strong> only to mention Hub members.
+        To email someone from a discussion, start your reply with a <strong>to:</strong> line, add optional lines such as <strong>cc:</strong>, <strong>bcc:</strong>, and <strong>subj:</strong>, then leave a blank line before the message. Use <strong>@</strong> only to mention Hub members.
       </div>
       {error && <p className="mt-3 text-sm font-semibold text-[#B91C1C]">{error}</p>}
     </section>
@@ -4963,7 +5149,7 @@ function SettingsModal({
             <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
             <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
-            <HelpTopic title="Email Features" body="Connect Gmail or Microsoft 365 in Settings, then start a discussion reply with #email or #mail. Add recipient lines such as to:, cc:, bcc:, and subj:, leave a blank line, then write the message. The @ symbol is only for tagging Hub members." theme={theme} />
+            <HelpTopic title="Email Features" body="Connect Gmail or Microsoft 365 in Settings, then start a discussion reply with a to: line. Add optional lines such as cc:, bcc:, and subj:, leave a blank line, then write the message. The @ symbol is only for tagging Hub members." theme={theme} />
             <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage the Hub subscription, promo codes, taxes, renewal terms, and payment methods through Stripe Checkout or the billing portal. Standard Hub pricing includes up to 25 employees; larger teams should contact TriCord for a custom plan." theme={theme} />
@@ -5437,12 +5623,14 @@ function getProfileFullName(profile?: AppProfile, fallback = 'Hub member') {
   return profile?.full_name?.trim() || profile?.display_name?.trim() || fallback;
 }
 
-function Avatar({ profile }: { profile?: AppProfile }) {
+function Avatar({ profile, status }: { profile?: AppProfile; status?: 'active' | 'idle' }) {
   const profileName = getProfileName(profile);
+  const statusClass = status === 'active' ? 'bg-[#22C55E]' : status === 'idle' ? 'bg-[#F59E0B]' : '';
+  const statusDot = status ? <span className={cn('absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white', statusClass)} /> : null;
   if (profile?.avatar_url) {
-    return <img src={profile.avatar_url} alt={profileName} className="h-9 w-9 rounded-lg object-cover" />;
+    return <span className="relative inline-flex h-9 w-9 shrink-0"><img src={profile.avatar_url} alt={profileName} className="h-9 w-9 rounded-lg object-cover" />{statusDot}</span>;
   }
-  return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent-strong)]">{profileName.slice(0, 1).toUpperCase()}</div>;
+  return <span className="relative inline-flex h-9 w-9 shrink-0"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent-strong)]">{profileName.slice(0, 1).toUpperCase()}</span>{statusDot}</span>;
 }
 
 async function fetchProfiles(userIds: string[]) {
@@ -5894,7 +6082,7 @@ async function uploadAvatar(userId: string, file: File) {
 async function createTask(
   workspaceId: string,
   userId: string,
-  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string },
+  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string; reminderAt: string; recurrenceRule: 'none' | 'daily' | 'weekly' | 'monthly' | 'custom'; recurrenceCustom: string },
 ) {
   if (!supabase) return;
   const { error } = await supabase.from('tasks').insert({
@@ -5907,14 +6095,17 @@ async function createTask(
     assignee_id: input.assigneeId || null,
     created_by: userId,
     status: 'todo',
-    due_at: input.dueAt || null,
+    due_at: input.dueAt ? new Date(input.dueAt).toISOString() : null,
+    reminder_at: input.reminderAt ? new Date(input.reminderAt).toISOString() : null,
+    recurrence_rule: input.recurrenceRule,
+    recurrence_custom: input.recurrenceRule === 'custom' ? input.recurrenceCustom || null : null,
   });
   if (error) throw error;
 }
 
 async function updateTask(
   taskId: string,
-  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string },
+  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string; reminderAt: string; recurrenceRule: 'none' | 'daily' | 'weekly' | 'monthly' | 'custom'; recurrenceCustom: string },
 ) {
   if (!supabase) return;
   const { data, error } = await supabase
@@ -5926,7 +6117,10 @@ async function updateTask(
       priority: input.priority,
       tags: input.tags,
       assignee_id: input.assigneeId || null,
-      due_at: input.dueAt || null,
+      due_at: input.dueAt ? new Date(input.dueAt).toISOString() : null,
+      reminder_at: input.reminderAt ? new Date(input.reminderAt).toISOString() : null,
+      recurrence_rule: input.recurrenceRule,
+      recurrence_custom: input.recurrenceRule === 'custom' ? input.recurrenceCustom || null : null,
     })
     .eq('id', taskId)
     .select('id')
@@ -5937,9 +6131,55 @@ async function updateTask(
 
 async function updateTaskStatus(taskId: string, status: TaskStatus) {
   if (!supabase) return;
-  const { data, error } = await supabase.from('tasks').update({ status }).eq('id', taskId).select('id').maybeSingle();
+  const { data, error } = await supabase
+    .from('tasks')
+    .update({ status })
+    .eq('id', taskId)
+    .select('id, workspace_id, post_id, title, description, project_name, priority, tags, assignee_id, created_by, status, due_at, reminder_at, recurrence_rule, recurrence_custom')
+    .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('The task status was not updated. Your account may not have permission to edit it.');
+
+  const task = data as Pick<AppTask, 'id' | 'workspace_id' | 'post_id' | 'title' | 'description' | 'project_name' | 'priority' | 'tags' | 'assignee_id' | 'created_by' | 'due_at' | 'reminder_at' | 'recurrence_rule' | 'recurrence_custom'>;
+  const nextDueAt = status === 'done' ? getNextRecurringDueDate(task) : null;
+  if (!nextDueAt) return;
+
+  const nextReminderAt = getNextRecurringReminderDate(task, nextDueAt);
+  const { error: insertError } = await supabase.from('tasks').insert({
+    workspace_id: task.workspace_id,
+    post_id: task.post_id,
+    title: task.title,
+    description: task.description,
+    project_name: task.project_name,
+    priority: task.priority ?? 'medium',
+    tags: task.tags ?? [],
+    assignee_id: task.assignee_id,
+    created_by: task.created_by,
+    status: 'todo',
+    due_at: nextDueAt.toISOString(),
+    reminder_at: nextReminderAt?.toISOString() ?? null,
+    recurrence_rule: task.recurrence_rule,
+    recurrence_custom: task.recurrence_custom,
+  });
+  if (insertError) throw insertError;
+}
+
+function getNextRecurringDueDate(task: Pick<AppTask, 'due_at' | 'recurrence_rule'>) {
+  if (!task.due_at || !task.recurrence_rule || task.recurrence_rule === 'none' || task.recurrence_rule === 'custom') return null;
+  const due = new Date(task.due_at);
+  if (Number.isNaN(due.getTime())) return null;
+  if (task.recurrence_rule === 'daily') due.setDate(due.getDate() + 1);
+  if (task.recurrence_rule === 'weekly') due.setDate(due.getDate() + 7);
+  if (task.recurrence_rule === 'monthly') due.setMonth(due.getMonth() + 1);
+  return due;
+}
+
+function getNextRecurringReminderDate(task: Pick<AppTask, 'due_at' | 'reminder_at'>, nextDueAt: Date) {
+  if (!task.due_at || !task.reminder_at) return null;
+  const due = new Date(task.due_at);
+  const reminder = new Date(task.reminder_at);
+  if (Number.isNaN(due.getTime()) || Number.isNaN(reminder.getTime())) return null;
+  return new Date(nextDueAt.getTime() - (due.getTime() - reminder.getTime()));
 }
 
 async function deleteTask(taskId: string) {
@@ -6460,6 +6700,13 @@ function buildMessageTextTokens(value: string, mentionProfiles: AppProfile[]): M
   return tokens;
 }
 
+function toDateTimeLocalInputValue(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
 function shortenUrlForDisplay(url: string) {
   try {
     const parsed = new URL(url);
@@ -6497,12 +6744,13 @@ function parseEmailSendCommand(value: string) {
   const raw = value.trim();
   if (!raw) return null;
   const lines = raw.split(/\r?\n/);
-  if (!/^#(?:email|mail)\b/i.test(lines[0] ?? '')) return null;
-  const commandLines = lines.slice(1);
+  const firstContentIndex = lines.findIndex((line) => line.trim().length > 0);
+  if (firstContentIndex < 0 || !/^\s*to:/i.test(lines[firstContentIndex] ?? '')) return null;
   const metadata: Record<string, string[]> = { to: [], cc: [], bcc: [], subj: [] };
   const bodyLines: string[] = [];
   let inMetadata = true;
-  for (const line of commandLines) {
+  for (let index = firstContentIndex; index < lines.length; index += 1) {
+    const line = lines[index];
     const match = inMetadata ? line.match(/^\s*(to|cc|bcc|subj|subject):\s*(.*)$/i) : null;
     if (match) {
       const key = match[1].toLowerCase() === 'subject' ? 'subj' : match[1].toLowerCase();

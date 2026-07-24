@@ -190,7 +190,7 @@ async function sendWithGmail(userClient: ReturnType<typeof createClient>, identi
   const account = await loadAccountSecret(userClient, identity);
   const accessToken = await getUsableAccessToken(userClient, account);
   const raw = encodeBase64Url(buildMimeMessage({ from: formatSender(identity), replyTo: identity.replyTo, to: email.to, cc: email.cc, bcc: email.bcc, subject: email.subject, text: email.text }));
-  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+  const response = await fetchWithRetry('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ raw }),
@@ -203,7 +203,7 @@ async function sendWithGmail(userClient: ReturnType<typeof createClient>, identi
 async function sendWithMicrosoft(userClient: ReturnType<typeof createClient>, identity: SenderIdentity, email: { to: string; cc: string[]; bcc: string[]; subject: string; text: string }) {
   const account = await loadAccountSecret(userClient, identity);
   const accessToken = await getUsableAccessToken(userClient, account);
-  const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+  const response = await fetchWithRetry('https://graph.microsoft.com/v1.0/me/sendMail', {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -223,6 +223,29 @@ async function sendWithMicrosoft(userClient: ReturnType<typeof createClient>, id
     throw new Error(String(result?.error?.message || 'Microsoft 365 could not send the email.'));
   }
   return { messageId: crypto.randomUUID() };
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, init);
+      if ((response.status === 429 || response.status >= 500) && attempt < attempts) {
+        await delay(350 * attempt);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await delay(350 * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Email provider did not respond.');
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function recipient(address: string) {

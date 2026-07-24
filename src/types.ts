@@ -190,6 +190,9 @@ export interface AppTask {
   created_by: string;
   status: TaskStatus;
   due_at: string | null;
+  reminder_at?: string | null;
+  recurrence_rule?: 'none' | 'daily' | 'weekly' | 'monthly' | 'custom';
+  recurrence_custom?: string | null;
   archived_at?: string | null;
   created_at: string;
   updated_at: string;

@@ -41,6 +41,9 @@ interface EmployeeProfile {
 interface TimeEntry {
   id: string; workspace_id: string; employee_profile_id: string; work_date: string;
   clock_in: string; clock_out: string | null; break_started_at: string | null; break_seconds: number;
+  confirmed_at?: string | null; confirmed_by?: string | null; disputed_at?: string | null;
+  dispute_reason?: string | null; dispute_status?: 'none' | 'pending' | 'approved' | 'declined';
+  dispute_reviewed_at?: string | null; dispute_reviewed_by?: string | null; dispute_resolution_note?: string | null;
 }
 
 interface TimeEvent {
@@ -124,6 +127,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [saving, setSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const [entryModal, setEntryModal] = useState<{ id: string; clockIn: string; clockOut: string } | null>(null);
+  const [disputeModal, setDisputeModal] = useState<{ entry: TimeEntry; reason: string } | null>(null);
   const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string; pending?: boolean; employeeProfileId?: string } | null>(null);
   const policySignatureRef = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -205,6 +209,9 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const attendanceEntries = entries.filter((entry) => attendanceEmployeeIds.has(entry.employee_profile_id));
   const ownEntries = isExemptEmployee ? [] : attendanceEntries.filter((entry) => entry.employee_profile_id === employee?.id);
   const visibleEntries = canConfigure || canManageEntries ? attendanceEntries : ownEntries;
+  const isOwnEntry = (entry: TimeEntry) => entry.employee_profile_id === employee?.id;
+  const canConfirmEntry = (entry: TimeEntry) => Boolean(entry.clock_out) && !entry.confirmed_at && entry.dispute_status !== 'pending' && (canManageEntries || isOwnEntry(entry));
+  const canDisputeEntry = (entry: TimeEntry) => Boolean(entry.clock_out) && isOwnEntry(entry) && entry.dispute_status !== 'pending';
   const eventsByEntry = useMemo(() => {
     const grouped = new Map<string, TimeEvent[]>();
     events.forEach((event) => {
@@ -336,6 +343,30 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     });
   };
 
+  const confirmEntry = async (entry: TimeEntry) => {
+    if (!supabase || !canConfirmEntry(entry)) return;
+    const { error } = await supabase.rpc('confirm_time_entry', { target_entry_id: entry.id });
+    if (error) onNotice(error.message); else { onNotice('Attendance record confirmed.'); await load(); }
+  };
+  const confirmAllEntries = async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc('confirm_time_entries', {
+      target_workspace_id: workspaceId,
+      target_employee_profile_id: canManageEntries ? null : employee?.id ?? null,
+    });
+    if (error) onNotice(error.message); else { onNotice(`${data ?? 0} attendance record${data === 1 ? '' : 's'} confirmed.`); await load(); }
+  };
+  const submitDispute = async () => {
+    if (!supabase || !disputeModal?.reason.trim()) return;
+    const { error } = await supabase.rpc('dispute_time_entry', { target_entry_id: disputeModal.entry.id, reason: disputeModal.reason.trim() });
+    if (error) onNotice(error.message); else { setDisputeModal(null); onNotice('Attendance dispute submitted.'); await load(); }
+  };
+  const reviewDispute = async (entry: TimeEntry, approved: boolean) => {
+    if (!supabase || !canManageEntries) return;
+    const { error } = await supabase.rpc('review_time_entry_dispute', { target_entry_id: entry.id, approved, note: null });
+    if (error) onNotice(error.message); else { onNotice(approved ? 'Attendance dispute approved.' : 'Attendance dispute declined.'); await load(); }
+  };
+
   const openSelfie = async (path: string) => {
     if (!supabase) return;
     const { data, error } = await supabase.storage.from('employee-documents').createSignedUrl(path, 300);
@@ -368,18 +399,36 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
               </>
             )}
           </div>}
-          {role === 'owner' && <div><h3 className="font-bold">Attendance records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Owners can correct or remove entries. Admins need an explicit attendance permission.</p></div>}
-          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock in', 'Clock out', 'Break', 'Hours', ...(canViewEvidence || canManageEntries ? ['Actions'] : [])]} theme={theme}>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div><h3 className="font-bold">Attendance Records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Employees can confirm or dispute completed records. Owners and permitted Admins can correct records and review disputes.</p></div>
+            {visibleEntries.some(canConfirmEntry) && <button type="button" onClick={() => void confirmAllEntries()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Check className="h-4 w-4" />Confirm All</button>}
+          </div>
+          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock In', 'Clock Out', 'Break', 'Hours', 'Status', 'Actions']} theme={theme}>
             {visibleEntries.map((entry) => {
               const entryEvents = eventsByEntry.get(entry.id) ?? [];
               const expanded = expandedEvidenceEntryId === entry.id;
-              const actionColSpan = (role === 'owner' || role === 'admin' ? 1 : 0) + 6 + (canViewEvidence || canManageEntries ? 1 : 0);
+              const actionColSpan = (role === 'owner' || role === 'admin' ? 1 : 0) + 8;
               return (
                 <Fragment key={entry.id}>
                   <tr className={cn('border-b last:border-0', border(theme))}>
-                    {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}<Cell>{formatDate(entry.work_date)}</Cell><Cell>{formatTime(entry.clock_in)}</Cell><Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell><Cell>{formatDuration(entry.break_seconds / 3600)}</Cell><Cell strong>{formatDuration(workedHours(entry, now))}</Cell>{(canViewEvidence || canManageEntries) && <Cell><div className="flex gap-2">{canViewEvidence && <IconAction label="View clock-in evidence" icon={ShieldCheck} onClick={() => setExpandedEvidenceEntryId(expanded ? '' : entry.id)} />}{canManageEntries && <IconAction label="Edit attendance" icon={Pencil} onClick={() => openAdjustEntry(entry)} />}{canManageEntries && <IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} />}</div></Cell>}
+                    {(role === 'owner' || role === 'admin') && <Cell strong>{employeeName(employees.find((item) => item.id === entry.employee_profile_id), profiles)}</Cell>}
+                    <Cell>{formatDate(entry.work_date)}</Cell>
+                    <Cell>{formatTime(entry.clock_in)}</Cell>
+                    <Cell>{entry.clock_out ? formatTime(entry.clock_out) : 'Active'}</Cell>
+                    <Cell>{formatDuration(entry.break_seconds / 3600)}</Cell>
+                    <Cell strong>{formatDuration(workedHours(entry, now))}</Cell>
+                    <Cell><AttendanceStatus entry={entry} /></Cell>
+                    <Cell><div className="flex flex-wrap gap-2">
+                      {canViewEvidence && <IconAction label="View clock-in evidence" icon={ShieldCheck} onClick={() => setExpandedEvidenceEntryId(expanded ? '' : entry.id)} />}
+                      {canConfirmEntry(entry) && <IconAction label="Confirm attendance" icon={Check} onClick={() => void confirmEntry(entry)} />}
+                      {canDisputeEntry(entry) && <IconAction label="Dispute or correct attendance" icon={Pencil} onClick={() => setDisputeModal({ entry, reason: entry.dispute_reason ?? '' })} />}
+                      {canManageEntries && entry.dispute_status === 'pending' && <><IconAction label="Approve dispute" icon={Check} onClick={() => void reviewDispute(entry, true)} /><IconAction label="Decline dispute" icon={X} onClick={() => void reviewDispute(entry, false)} /></>}
+                      {canManageEntries && <IconAction label="Edit attendance" icon={Pencil} onClick={() => openAdjustEntry(entry)} />}
+                      {canManageEntries && <IconAction label="Delete attendance" icon={Trash2} onClick={() => void deleteEntry(entry)} />}
+                    </div></Cell>
                   </tr>
                   {expanded && <tr className={cn('border-b', border(theme))}><td colSpan={actionColSpan} className="px-4 py-4"><TimeEvidencePanel events={entryEvents} theme={theme} onOpenSelfie={openSelfie} /></td></tr>}
+                  {entry.dispute_reason && <tr className={cn('border-b', border(theme))}><td colSpan={actionColSpan} className="px-4 pb-4"><p className={cn('rounded-lg border px-3 py-2 text-xs leading-5', buttonSurface(theme))}><strong>Dispute note:</strong> {entry.dispute_reason}</p></td></tr>}
                 </Fragment>
               );
             })}
@@ -412,6 +461,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       </div>
     </ModuleFrame>
     {entryModal && <WorkforceModal title="Edit attendance entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save entry</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Clock in" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /><Field label="Clock out (optional)" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} /></div><p className={cn('mt-3 text-xs', muted(theme))}>Use a complete date and time, such as 2026-07-14T09:00:00Z.</p></WorkforceModal>}
+    {disputeModal && <WorkforceModal title="Dispute Attendance Record" theme={theme} onClose={() => setDisputeModal(null)} footer={<><button type="button" onClick={() => setDisputeModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void submitDispute()} disabled={!disputeModal.reason.trim()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)] disabled:opacity-50">Submit Dispute</button></>}><label className="grid gap-2 text-sm font-semibold">What needs to be corrected?<textarea value={disputeModal.reason} onChange={(event) => setDisputeModal({ ...disputeModal, reason: event.target.value })} className={cn('min-h-32 rounded-lg border p-3 outline-none', panel(theme))} placeholder="Explain what looks incorrect and what the correct time should be." /></label></WorkforceModal>}
     {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={policyNotice.pending ? <><button type="button" onClick={() => void respondToPendingPolicy(false)} disabled={saving} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Decline</button><button type="button" onClick={() => void respondToPendingPolicy(true)} disabled={saving} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Accept</button></> : <button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
@@ -1108,6 +1158,14 @@ function SelectField({ label, value, options, optionLabels, onChange, theme, com
 function Segmented({ options, value, onChange, theme }: { options: string[][]; value: string; onChange: (value: string) => void; theme: Theme }) { return <div className={cn('inline-flex rounded-lg border p-1', panel(theme))}>{options.map(([key, label]) => <button key={key} onClick={() => onChange(key)} className={cn('h-9 rounded-md px-4 text-sm font-semibold', value === key ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : muted(theme))}>{label}</button>)}</div>; }
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) { return <label className="flex items-center justify-between gap-3 py-1.5 text-sm"><span>{label}</span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" /></label>; }
 function StatusPill({ value }: { value: string }) { return <span className="inline-flex rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold capitalize text-[var(--accent-strong)]">{value.replaceAll('_', ' ')}</span>; }
+function AttendanceStatus({ entry }: { entry: TimeEntry }) {
+  if (entry.dispute_status === 'pending') return <span className="inline-flex rounded-full bg-[#FEF3C7] px-2.5 py-1 text-xs font-semibold text-[#92400E]">Disputed</span>;
+  if (entry.dispute_status === 'approved') return <span className="inline-flex rounded-full bg-[#DCFCE7] px-2.5 py-1 text-xs font-semibold text-[#166534]">Correction Approved</span>;
+  if (entry.dispute_status === 'declined') return <span className="inline-flex rounded-full bg-[#FEE2E2] px-2.5 py-1 text-xs font-semibold text-[#991B1B]">Correction Declined</span>;
+  if (entry.confirmed_at) return <span className="inline-flex rounded-full bg-[#DCFCE7] px-2.5 py-1 text-xs font-semibold text-[#166534]">Confirmed</span>;
+  if (!entry.clock_out) return <span className="inline-flex rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent-strong)]">Active</span>;
+  return <span className="inline-flex rounded-full bg-[#E5E7EB] px-2.5 py-1 text-xs font-semibold text-[#374151]">Needs Confirmation</span>;
+}
 function IconAction({ label, icon: Icon, onClick }: { label: string; icon: typeof Check; onClick: () => void }) { return <button aria-label={label} title={label} onClick={onClick} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-current/20"><Icon className="h-3.5 w-3.5" /></button>; }
 function EmptyState({ icon: Icon, title, body, theme }: { icon: typeof Banknote; title: string; body: string; theme: Theme }) { return <div className={cn('mt-8 flex min-h-56 flex-col items-center justify-center rounded-lg border p-8 text-center', panel(theme))}><Icon className="h-8 w-8 text-[var(--accent)]" /><h3 className="mt-3 font-bold">{title}</h3><p className={cn('mt-1 max-w-md text-sm', muted(theme))}>{body}</p></div>; }
 function MiniAvatar({ profile, large = false }: { profile?: AppProfile; large?: boolean }) { const name = profile?.nickname || profile?.display_name || 'E'; return profile?.avatar_url ? <img src={profile.avatar_url} alt="" className={cn('rounded-lg object-cover', large ? 'h-12 w-12' : 'h-9 w-9')} /> : <span className={cn('flex items-center justify-center rounded-lg bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]', large ? 'h-12 w-12' : 'h-9 w-9 text-sm')}>{name.slice(0, 1).toUpperCase()}</span>; }

@@ -1576,18 +1576,13 @@ export default function App() {
               {view === 'feed' && (
                 <>
                   <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length + 1} theme={theme} />
-                  <div className="flex shrink-0 items-start gap-2">
-                    <div className="min-w-0 flex-1"><SortBar sort={sort} setSort={setSort} theme={theme} /></div>
-                    <button
-                      type="button"
-                      aria-label={feedPostsCollapsed ? 'Expand posts' : 'Collapse posts'}
-                      title={feedPostsCollapsed ? 'Expand posts' : 'Collapse posts'}
-                      onClick={() => setFeedPostsCollapsed((current) => !current)}
-                      className={cn('mt-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border md:mt-4', subtleButton(theme), feedPostsCollapsed && 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]')}
-                    >
-                      {feedPostsCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-                    </button>
-                  </div>
+                  <SortBar
+    sort={sort}
+    setSort={setSort}
+    theme={theme}
+    feedPostsCollapsed={feedPostsCollapsed}
+    setFeedPostsCollapsed={setFeedPostsCollapsed}
+/>
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area md:mt-4">
                     {currentSpacePosts.length > 0 ? (
                       <div className="grid gap-4 pb-6">
@@ -2549,18 +2544,58 @@ function MetricCard({ label, value, theme }: { label: string; value: number; the
   );
 }
 
-function SortBar({ sort, setSort, theme }: { sort: SortMode; setSort: (sort: SortMode) => void; theme: 'light' | 'dark' }) {
+function SortBar({
+  sort,
+  setSort,
+  theme,
+  feedPostsCollapsed,
+  setFeedPostsCollapsed,
+}: {
+  sort: SortMode;
+  setSort: (sort: SortMode) => void;
+  theme: 'light' | 'dark';
+  feedPostsCollapsed: boolean;
+  setFeedPostsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
   return (
-    <div className={cn('mt-3 flex shrink-0 gap-1 overflow-hidden rounded-lg border p-1 md:mt-4 md:gap-2', surface(theme))}>
-      {sortOptions.map((option) => (
-        <button
-          key={option.value}
-          onClick={() => setSort(option.value)}
-          className={cn('h-8 rounded-md px-2 text-xs font-semibold transition md:h-9 md:px-3 md:text-sm', sort === option.value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : cn(muted(theme), 'hover:bg-[var(--accent-soft)]'))}
-        >
-          {option.label}
-        </button>
-      ))}
+    <div
+      className={cn(
+        "mt-3 md:mt-4 flex items-center gap-2 rounded-lg border p-1",
+        surface(theme)
+      )}
+    >
+      <div className="flex flex-1 gap-1">
+        {sortOptions.map((option) => (
+          <button
+            key={option.value}
+            onClick={() => setSort(option.value)}
+            className={cn(
+              "h-8 rounded-md px-3 text-sm font-semibold transition",
+              sort === option.value
+                ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm"
+                : cn(muted(theme), "hover:bg-[var(--accent-soft)]")
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        aria-label={feedPostsCollapsed ? "Expand posts" : "Collapse posts"}
+        onClick={() => setFeedPostsCollapsed(v => !v)}
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-md border",
+          subtleButton(theme)
+        )}
+      >
+        {feedPostsCollapsed ? (
+          <PanelRightOpen className="h-4 w-4" />
+        ) : (
+          <PanelRightClose className="h-4 w-4" />
+        )}
+      </button>
     </div>
   );
 }

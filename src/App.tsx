@@ -448,6 +448,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [view, setView] = useState<ViewMode>('feed');
   const [sort, setSort] = useState<SortMode>('active');
+  const [feedPostsCollapsed, setFeedPostsCollapsed] = useState(false);
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<AppWorkspace[]>([]);
@@ -607,8 +608,17 @@ export default function App() {
     const now = new Date().toISOString();
     window.localStorage.setItem(unreadSeenKey, now);
     setLastSeenActivityAt(now);
-    setLiveUnreadPostIds(new Set());
   }, [unreadSeenKey]);
+
+  const markPostActivitySeen = useCallback((postId?: string | null) => {
+    if (!postId) return;
+    setLiveUnreadPostIds((current) => {
+      if (!current.has(postId)) return current;
+      const next = new Set(current);
+      next.delete(postId);
+      return next;
+    });
+  }, []);
 
   const openBillingPortal = useCallback(async (targetWorkspaceId = workspaceId) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -725,7 +735,10 @@ export default function App() {
   useEffect(() => {
     if (!unreadSeenKey) return;
     const markVisible = () => {
-      if (document.visibilityState === 'visible' && isViewingActiveDiscussion) markWorkspaceActivitySeen();
+      if (document.visibilityState === 'visible' && isViewingActiveDiscussion) {
+        markPostActivitySeen(selectedPostIdRef.current);
+        markWorkspaceActivitySeen();
+      }
     };
     window.addEventListener('focus', markVisible);
     document.addEventListener('visibilitychange', markVisible);
@@ -733,12 +746,13 @@ export default function App() {
       window.removeEventListener('focus', markVisible);
       document.removeEventListener('visibilitychange', markVisible);
     };
-  }, [isViewingActiveDiscussion, markWorkspaceActivitySeen, unreadSeenKey]);
+  }, [isViewingActiveDiscussion, markPostActivitySeen, markWorkspaceActivitySeen, unreadSeenKey]);
 
   useEffect(() => {
     if (!unreadSeenKey || !isViewingActiveDiscussion || document.visibilityState !== 'visible') return;
+    markPostActivitySeen(selectedPostIdRef.current);
     markWorkspaceActivitySeen();
-  }, [comments.length, isViewingActiveDiscussion, markWorkspaceActivitySeen, posts.length, tasks.length, unreadSeenKey]);
+  }, [comments.length, isViewingActiveDiscussion, markPostActivitySeen, markWorkspaceActivitySeen, posts.length, tasks.length, unreadSeenKey]);
 
   useEffect(() => {
     if (marketingHome) return;
@@ -752,7 +766,7 @@ export default function App() {
     const isBackground = document.visibilityState === 'hidden' || !document.hasFocus();
     if (hasNewActivity && (isBackground || !isViewingActiveDiscussion)) {
       if (notificationPreferences.sound) playNotificationTone();
-      if (notificationPreferences.desktop && isBackground) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
+      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
     }
     previousUnreadCountRef.current = notificationUnreadCount;
   }, [isViewingActiveDiscussion, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
@@ -1213,9 +1227,13 @@ export default function App() {
       }),
     );
     setAttachments(nextAttachments);
-    setReactions((reactionResult.data ?? []) as AppReaction[]);
+    const nextReactions = (reactionResult.data ?? []) as AppReaction[];
+    setReactions(nextReactions);
 
-    const authorIds = [...new Set(nextComments.map((comment) => comment.author_id))];
+    const authorIds = [...new Set([
+      ...nextComments.map((comment) => comment.author_id),
+      ...nextReactions.map((reaction) => reaction.user_id),
+    ])];
     if (authorIds.length) {
       const nextProfiles = await fetchProfiles(authorIds);
       setProfiles((current) => ({
@@ -1558,7 +1576,18 @@ export default function App() {
               {view === 'feed' && (
                 <>
                   <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length + 1} theme={theme} />
-                  <SortBar sort={sort} setSort={setSort} theme={theme} />
+                  <div className="flex shrink-0 items-start gap-2">
+                    <div className="min-w-0 flex-1"><SortBar sort={sort} setSort={setSort} theme={theme} /></div>
+                    <button
+                      type="button"
+                      aria-label={feedPostsCollapsed ? 'Expand posts' : 'Collapse posts'}
+                      title={feedPostsCollapsed ? 'Expand posts' : 'Collapse posts'}
+                      onClick={() => setFeedPostsCollapsed((current) => !current)}
+                      className={cn('mt-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border md:mt-4', subtleButton(theme), feedPostsCollapsed && 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]')}
+                    >
+                      {feedPostsCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+                    </button>
+                  </div>
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area md:mt-4">
                     {currentSpacePosts.length > 0 ? (
                       <div className="grid gap-4 pb-6">
@@ -1570,18 +1599,14 @@ export default function App() {
                               profile={profiles[post.author_id]}
                               profileStatus={post.author_id ? onlineStatuses[post.author_id]?.status : undefined}
                               unread={unreadPostIds.has(post.id)}
+                              collapsed={feedPostsCollapsed}
                               theme={theme}
                               space={spaces.find((item) => item.id === post.space_id)}
                               members={memberProfiles}
                               onClick={() => {
                                 setSelectedPostId(post.id);
                                 setChatOpen(true);
-                                setLiveUnreadPostIds((current) => {
-                                  if (!current.has(post.id)) return current;
-                                  const next = new Set(current);
-                                  next.delete(post.id);
-                                  return next;
-                                });
+                                markPostActivitySeen(post.id);
                               }}
                               canManage={post.author_id === session.user.id || canModerateContent}
                               onEdit={() => setEditingPost(post)}
@@ -2387,9 +2412,9 @@ function Sidebar({
           </div>
         </section>
 
-        <div ref={accountMenuRef} className="relative z-[9000] mt-auto shrink-0 pt-4">
+        <div ref={accountMenuRef} className="relative z-[9500] mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[9001] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[9501] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl scroll-area">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
                 <Avatar profile={profile} />
                 <div className="min-w-0 flex-1">
@@ -2432,7 +2457,7 @@ function Sidebar({
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                         {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[9002] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute left-[calc(100%+0.75rem)] top-0 z-[9600] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                         <AccountMenuButton icon={Bell} label="Notifications" onClick={() => openAccountView('notifications')} />
@@ -2451,7 +2476,7 @@ function Sidebar({
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[9002] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute left-[calc(100%+0.75rem)] top-0 z-[9600] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
@@ -2546,6 +2571,7 @@ function PostRow({
   profile,
   profileStatus,
   unread,
+  collapsed,
   theme,
   space,
   members,
@@ -2561,6 +2587,7 @@ function PostRow({
   profile?: AppProfile;
   profileStatus?: 'active' | 'idle';
   unread: boolean;
+  collapsed: boolean;
   theme: 'light' | 'dark';
   space?: AppSpace;
   members: AppProfile[];
@@ -2571,6 +2598,40 @@ function PostRow({
   onArchive: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
+  const postRowClassName = cn(
+    'w-full rounded-lg border p-4 text-left transition',
+    selected
+      ? cn(surface(theme), 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15', unread && (theme === 'dark' ? 'bg-[var(--accent)]/12' : 'bg-[var(--accent-soft)]'))
+      : surface(theme),
+    unread && !selected && (
+      theme === 'dark'
+        ? 'border-[var(--accent)] bg-[var(--accent)]/10 shadow-sm shadow-[var(--accent-strong)]/20'
+        : 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm shadow-[var(--accent-strong)]/10'
+    ),
+  );
+
+  if (collapsed) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') onClick();
+        }}
+        className={cn(postRowClassName, 'p-3')}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <StatusPill state={post.state} />
+          {space && <span className={cn('hidden rounded-full px-2 py-0.5 text-[11px] font-semibold sm:inline-flex', theme === 'dark' ? 'bg-white/10 text-[#B8B3C2]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
+          {unread && <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-ink)]">New</span>}
+          <h2 className="min-w-0 flex-1 truncate text-sm font-bold tracking-tight">{post.title}</h2>
+          <span className={cn('shrink-0 text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       role="button"
@@ -2579,17 +2640,7 @@ function PostRow({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onClick();
       }}
-      className={cn(
-        'w-full rounded-lg border p-4 text-left transition',
-        selected
-          ? cn(surface(theme), 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15', unread && (theme === 'dark' ? 'bg-[var(--accent)]/12' : 'bg-[var(--accent-soft)]'))
-          : surface(theme),
-        unread && !selected && (
-          theme === 'dark'
-            ? 'border-[var(--accent)] bg-[var(--accent)]/10 shadow-sm shadow-[var(--accent-strong)]/20'
-            : 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm shadow-[var(--accent-strong)]/10'
-        ),
-      )}
+      className={postRowClassName}
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill state={post.state} />
@@ -3358,20 +3409,24 @@ function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceI
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const [actionError, setActionError] = useState('');
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [reactionPopoverEmoji, setReactionPopoverEmoji] = useState<string | null>(null);
   const reactionGroups = groupReactions(reactions);
+  const reactionProfileById = useMemo(() => new Map(mentionProfiles.map((member) => [member.id, member])), [mentionProfiles]);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !reactionPopoverEmoji) return;
     const closeMenu = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
+      if (!cardRef.current?.contains(event.target as Node)) {
         setMenuOpen(false);
         setReactionPickerOpen(false);
+        setReactionPopoverEmoji(null);
       }
     };
     document.addEventListener('pointerdown', closeMenu);
     return () => document.removeEventListener('pointerdown', closeMenu);
-  }, [menuOpen]);
+  }, [menuOpen, reactionPopoverEmoji]);
 
   const runAction = async (action: () => Promise<void>) => {
     setActionError('');
@@ -3379,7 +3434,7 @@ function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceI
   };
 
   return (
-    <div className={cn('relative rounded-lg border p-4', surface(theme))}>
+    <div ref={cardRef} className={cn('relative rounded-lg border p-4', surface(theme))}>
       <div className="mb-3 flex items-center gap-3">
         <Avatar profile={profile} status={profileStatus} />
         <div className="min-w-0">
@@ -3407,11 +3462,52 @@ function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceI
         </div>
       )}
       <div className="mt-3 flex min-h-7 flex-wrap items-end gap-2">
-        {reactionGroups.map((group) => (
-          <button key={group.emoji} type="button" onClick={() => void runAction(() => onReact(group.emoji))} className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs', group.userIds.includes(currentUserId) ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[#17151D]' : subtleButton(theme))}>
-            <span>{group.emoji}</span><span>{group.count}</span>
-          </button>
-        ))}
+        {reactionGroups.map((group) => {
+          const reactedByCurrentUser = group.userIds.includes(currentUserId);
+          return (
+            <div key={group.emoji} className="relative">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setReactionPopoverEmoji((current) => current === group.emoji ? null : group.emoji);
+                }}
+                className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs', reactedByCurrentUser ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[#17151D]' : subtleButton(theme))}
+              >
+                <span>{group.emoji}</span><span>{group.count}</span>
+              </button>
+              {reactionPopoverEmoji === group.emoji && (
+                <div className={cn('absolute bottom-full left-0 z-[95] mb-2 w-60 rounded-lg border p-3 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-white')}>
+                  <p className={cn('mb-2 text-[11px] font-bold uppercase tracking-[0.14em]', muted(theme))}>{group.emoji} Reacted By</p>
+                  <div className="grid gap-2">
+                    {group.userIds.map((userId) => {
+                      const member = reactionProfileById.get(userId);
+                      return (
+                        <div key={userId} className="flex min-w-0 items-center gap-2 text-sm">
+                          <Avatar profile={member} />
+                          <span className="min-w-0 flex-1 truncate font-semibold">{getProfileName(member)}{userId === currentUserId ? ' (you)' : ''}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {reactedByCurrentUser && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setReactionPopoverEmoji(null);
+                        void runAction(() => onReact(group.emoji));
+                      }}
+                      className={cn('mt-3 h-8 w-full rounded-md border px-3 text-xs font-bold', subtleButton(theme))}
+                    >
+                      Remove My Reaction
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
         <div ref={menuRef} className="relative ml-auto flex items-center gap-1">
           <span className={cn('text-[11px]', muted(theme))}>{formatMessageTime(timestamp)}</span>
           <button

@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.inbound-email]
 verify_jwt = false
+
+[functions.email-oauth-callback]
+verify_jwt = false

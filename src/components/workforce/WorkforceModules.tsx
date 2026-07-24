@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, Clock3, Coffee, ExternalLink, FileUp,
+  Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Clock3, Coffee, ExternalLink, FileUp,
   Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Users,
   Trash2, X,
 } from 'lucide-react';
@@ -126,7 +126,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
-  const [entryModal, setEntryModal] = useState<{ id: string; clockIn: string; clockOut: string } | null>(null);
+  const [entryModal, setEntryModal] = useState<{ id: string; workDate: string; clockIn: string; clockOut: string } | null>(null);
   const [disputeModal, setDisputeModal] = useState<{ entry: TimeEntry; reason: string } | null>(null);
   const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string; pending?: boolean; employeeProfileId?: string } | null>(null);
   const policySignatureRef = useRef<string | null>(null);
@@ -315,17 +315,26 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   };
   const openAdjustEntry = (entry: TimeEntry) => {
     if (!canManageEntries) return;
-    setEntryModal({ id: entry.id, clockIn: entry.clock_in, clockOut: entry.clock_out ?? '' });
+    setEntryModal({
+      id: entry.id,
+      workDate: entry.work_date,
+      clockIn: toLocalTimeInput(entry.clock_in),
+      clockOut: entry.clock_out ? toLocalTimeInput(entry.clock_out) : '',
+    });
   };
   const saveEntryAdjustment = async () => {
     if (!supabase || !canManageEntries || !entryModal) return;
-    const clockInDate = new Date(entryModal.clockIn);
-    const clockOutDate = entryModal.clockOut.trim() ? new Date(entryModal.clockOut) : null;
+    const clockInDate = toDateFromLocalParts(entryModal.workDate, entryModal.clockIn);
+    const clockOutDate = entryModal.clockOut.trim() ? toDateFromLocalParts(entryModal.workDate, entryModal.clockOut) : null;
     if (Number.isNaN(clockInDate.getTime()) || (clockOutDate && Number.isNaN(clockOutDate.getTime()))) {
       onNotice('Enter valid date/time values.');
       return;
     }
-    const { error } = await supabase.from('time_entries').update({ clock_in: clockInDate.toISOString(), clock_out: clockOutDate ? clockOutDate.toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entryModal.id);
+    if (clockOutDate && clockOutDate < clockInDate) {
+      onNotice('Clock out must be later than clock in.');
+      return;
+    }
+    const { error } = await supabase.from('time_entries').update({ work_date: entryModal.workDate, clock_in: clockInDate.toISOString(), clock_out: clockOutDate ? clockOutDate.toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entryModal.id);
     if (error) onNotice(error.message); else { setEntryModal(null); onNotice('Attendance entry updated.'); await load(); }
   };
   const deleteEntry = (entry: TimeEntry) => {
@@ -460,7 +469,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         </aside>}
       </div>
     </ModuleFrame>
-    {entryModal && <WorkforceModal title="Edit attendance entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save entry</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Clock in" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /><Field label="Clock out (optional)" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} /></div><p className={cn('mt-3 text-xs', muted(theme))}>Use a complete date and time, such as 2026-07-14T09:00:00Z.</p></WorkforceModal>}
+    {entryModal && <WorkforceModal title="Edit Attendance Entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Entry</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Work Date" type="date" value={entryModal.workDate} onChange={(value) => setEntryModal({ ...entryModal, workDate: value })} theme={theme} /><FriendlyTimeField label="Clock In" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /><FriendlyTimeField label="Clock Out (Optional)" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} allowBlank /></div></WorkforceModal>}
     {disputeModal && <WorkforceModal title="Dispute Attendance Record" theme={theme} onClose={() => setDisputeModal(null)} footer={<><button type="button" onClick={() => setDisputeModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void submitDispute()} disabled={!disputeModal.reason.trim()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)] disabled:opacity-50">Submit Dispute</button></>}><label className="grid gap-2 text-sm font-semibold">What needs to be corrected?<textarea value={disputeModal.reason} onChange={(event) => setDisputeModal({ ...disputeModal, reason: event.target.value })} className={cn('min-h-32 rounded-lg border p-3 outline-none', panel(theme))} placeholder="Explain what looks incorrect and what the correct time should be." /></label></WorkforceModal>}
     {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={policyNotice.pending ? <><button type="button" onClick={() => void respondToPendingPolicy(false)} disabled={saving} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Decline</button><button type="button" onClick={() => void respondToPendingPolicy(true)} disabled={saving} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Accept</button></> : <button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
@@ -673,7 +682,7 @@ function HrPage({ workspaceId, userId, role, profiles, memberships, capabilities
     <Segmented options={[['people', canManage ? 'People' : 'Profile'], ['leave', 'Approvals'], ['documents', 'Documents'], ['performance', 'Performance'], ...(canManagePayroll ? [['compensation', 'Compensation']] : [])]} value={tab} onChange={(value) => setTab(value as typeof tab)} theme={theme} />
     {tab === 'people' && <div className={cn('mt-5 grid min-h-0 max-h-[calc(100dvh-310px)] gap-5 overflow-hidden', canManage ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'w-full')}>
       {canManage && <div className="min-h-0 overflow-hidden"><label className={cn('flex h-10 items-center gap-2 rounded-lg border px-3', panel(theme))}><Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label><div className="mt-3 max-h-[calc(100dvh-370px)] space-y-1 overflow-y-auto pb-20 pr-1 scroll-area">{filtered.map((employee) => <button key={employee.id} onClick={() => setSelectedId(employee.id)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left', selectedId === employee.id ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-[#F0EDF3]')}><MiniAvatar profile={profiles[employee.user_id]} /><span className="min-w-0"><strong className="block truncate text-sm">{employeeName(employee, profiles)}</strong><span className={cn('block truncate text-xs', muted(theme))}>{hrPersonLabel(membershipRoleByUserId.get(employee.user_id))}</span></span></button>)}</div></div>}
-      {editing && <div className={cn('min-h-0 max-h-[calc(100dvh-310px)] overflow-y-auto rounded-lg border p-5 pb-24 scroll-area', panel(theme))}><div className="mb-5 flex items-center gap-3"><MiniAvatar profile={profiles[editing.user_id]} large /><div><h3 className="text-lg font-bold">{employeeName(editing, profiles)}</h3><p className={cn('text-sm', muted(theme))}>{profiles[editing.user_id]?.email}</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="First name" value={editing.first_name ?? ''} onChange={(value) => setEditing({ ...editing, first_name: value })} theme={theme} /><Field label="Last name" value={editing.last_name ?? ''} onChange={(value) => setEditing({ ...editing, last_name: value })} theme={theme} /><Field label="Contact number" value={editing.contact_number ?? ''} onChange={(value) => setEditing({ ...editing, contact_number: value })} theme={theme} /><Field label="Birthday" type="date" value={editing.birthday ?? ''} onChange={(value) => setEditing({ ...editing, birthday: value || null })} theme={theme} /><Field label="Address" value={editing.address ?? ''} onChange={(value) => setEditing({ ...editing, address: value })} theme={theme} wide /><Field label="Emergency contact" value={editing.emergency_contact_name ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_name: value })} theme={theme} /><Field label="Emergency number" value={editing.emergency_contact_number ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_number: value })} theme={theme} />{canManage && <><Field label="Employee number" value={editing.employee_number ?? ''} onChange={(value) => setEditing({ ...editing, employee_number: value || null })} theme={theme} /><Field label="Department (used in reports)" value={editing.department ?? ''} onChange={(value) => setEditing({ ...editing, department: value || null })} theme={theme} /><Field label="Position" value={editing.position ?? ''} onChange={(value) => setEditing({ ...editing, position: value || null })} theme={theme} /><Field label="Hire date" type="date" value={editing.hire_date ?? ''} onChange={(value) => setEditing({ ...editing, hire_date: value || null })} theme={theme} /><SelectField label="Employment type" value={editing.employment_type ?? ''} options={['', 'full_time', 'part_time', 'contractor', 'temporary', 'intern']} onChange={(value) => setEditing({ ...editing, employment_type: value || null })} theme={theme} /><SelectField label="Overtime Classification" value={editing.exemption_status ?? 'non_exempt'} options={['non_exempt', 'exempt']} optionLabels={{ non_exempt: 'Non-exempt', exempt: 'Exempt' }} onChange={(value) => setEditing({ ...editing, exemption_status: value as 'exempt' | 'non_exempt' })} theme={theme} /><SelectField label="Status" value={editing.employment_status} options={['active', 'inactive', 'on_leave', 'terminated']} onChange={(value) => setEditing({ ...editing, employment_status: value })} theme={theme} /><label className="block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Manager</span><select value={editing.manager_user_id ?? ''} onChange={(event) => setEditing({ ...editing, manager_user_id: event.target.value || null })} className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="">Not assigned</option>{employees.filter((employee) => employee.id !== editing.id).map((employee) => <option key={employee.id} value={employee.user_id}>{employeeName(employee, profiles)}</option>)}</select></label></>}</div><button onClick={() => void saveProfile()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save profile</button></div>}
+      {editing && <div className={cn('min-h-0 max-h-[calc(100dvh-310px)] overflow-y-auto rounded-lg border p-5 pb-24 scroll-area', panel(theme))}><div className="mb-5 flex items-center gap-3"><MiniAvatar profile={profiles[editing.user_id]} large /><div><h3 className="text-lg font-bold">{employeeName(editing, profiles)}</h3><p className={cn('text-sm', muted(theme))}>{profiles[editing.user_id]?.email}</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="First name" value={editing.first_name ?? ''} onChange={(value) => setEditing({ ...editing, first_name: value })} theme={theme} /><Field label="Last name" value={editing.last_name ?? ''} onChange={(value) => setEditing({ ...editing, last_name: value })} theme={theme} /><Field label="Contact number" value={editing.contact_number ?? ''} onChange={(value) => setEditing({ ...editing, contact_number: value })} theme={theme} /><Field label="Birthday" type="date" value={editing.birthday ?? ''} onChange={(value) => setEditing({ ...editing, birthday: value || null })} theme={theme} /><Field label="Address" value={editing.address ?? ''} onChange={(value) => setEditing({ ...editing, address: value })} theme={theme} wide /><Field label="Emergency contact" value={editing.emergency_contact_name ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_name: value })} theme={theme} /><Field label="Emergency number" value={editing.emergency_contact_number ?? ''} onChange={(value) => setEditing({ ...editing, emergency_contact_number: value })} theme={theme} />{canManage && <><Field label="Employee number" value={editing.employee_number ?? ''} onChange={(value) => setEditing({ ...editing, employee_number: value || null })} theme={theme} /><Field label="Department (used in reports)" value={editing.department ?? ''} onChange={(value) => setEditing({ ...editing, department: value || null })} theme={theme} /><Field label="Position" value={editing.position ?? ''} onChange={(value) => setEditing({ ...editing, position: value || null })} theme={theme} /><Field label="Hire date" type="date" value={editing.hire_date ?? ''} onChange={(value) => setEditing({ ...editing, hire_date: value || null })} theme={theme} /><SelectField label="Employment type" value={editing.employment_type ?? ''} options={['', 'full_time', 'part_time', 'contractor', 'temporary', 'intern']} onChange={(value) => setEditing({ ...editing, employment_type: value || null })} theme={theme} /><SelectField label="Employee Classification" value={editing.exemption_status ?? 'non_exempt'} options={['non_exempt', 'exempt']} optionLabels={{ non_exempt: 'Non-exempt', exempt: 'Exempt' }} onChange={(value) => setEditing({ ...editing, exemption_status: value as 'exempt' | 'non_exempt' })} theme={theme} /><SelectField label="Status" value={editing.employment_status} options={['active', 'inactive', 'on_leave', 'terminated']} onChange={(value) => setEditing({ ...editing, employment_status: value })} theme={theme} /><label className="block"><span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Manager</span><select value={editing.manager_user_id ?? ''} onChange={(event) => setEditing({ ...editing, manager_user_id: event.target.value || null })} className={cn('h-11 w-full rounded-lg border px-3 text-sm', panel(theme))}><option value="">Not assigned</option>{employees.filter((employee) => employee.id !== editing.id).map((employee) => <option key={employee.id} value={employee.user_id}>{employeeName(employee, profiles)}</option>)}</select></label></>}</div><button onClick={() => void saveProfile()} disabled={saving} className="mt-5 h-11 rounded-lg bg-[var(--accent)] px-5 text-sm font-bold text-[var(--accent-ink)]">Save profile</button></div>}
     </div>}
     {tab === 'leave' && <div className="mt-5 min-h-0 max-h-[calc(100dvh-310px)] overflow-y-auto pb-24 pr-1 scroll-area"><div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{leaveTypes.map((type) => { const balance = leaveBalances.find((item) => item.employee_profile_id === selected?.id && item.leave_type_id === type.id && item.year === new Date().getFullYear()); const remaining = Number(balance?.allocated ?? type.annual_allowance) - Number(balance?.used ?? 0); return <button key={type.id} type="button" onClick={() => openAllocationModal(type.id, type.name)} disabled={!canManage} className={cn('rounded-lg border p-4 text-left', panel(theme))}><span className={cn('text-xs font-semibold', muted(theme))}>{type.name}</span><strong className="mt-1 block text-xl">{remaining} days</strong></button>; })}</div><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">{canApproveLeave ? 'Approvals' : 'My Requests'}</h3><p className={cn('text-sm', muted(theme))}>{leaveRequests.length} requests</p></div>{canRequestLeave && <button onClick={() => openLeaveModal()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Request Leave</button>}</div><DataTable headers={['Employee', 'Type', 'Dates', 'Days', 'Status', 'Actions']} theme={theme}>{leaveRequests.map((request) => { const requestEmployee = employees.find((employee) => employee.id === request.employee_profile_id); const isOwnRequest = requestEmployee?.user_id === userId; const canEditRequest = canApproveLeave || (isOwnRequest && request.status === 'pending'); const canCancelRequest = isOwnRequest && request.status === 'pending'; const canDeleteRequest = canApproveLeave; return <tr key={request.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(requestEmployee, profiles)}</Cell><Cell>{leaveTypes.find((type) => type.id === request.leave_type_id)?.name ?? 'Leave'}</Cell><Cell>{formatDate(request.start_date)} - {formatDate(request.end_date)}</Cell><Cell>{request.days}</Cell><Cell><StatusPill value={request.status} /></Cell><Cell><div className="flex flex-wrap gap-2">{canEditRequest && <IconAction label="Edit leave request" icon={Pencil} onClick={() => openLeaveModal(request)} />}{canApproveLeave && request.status === 'pending' && <><IconAction label="Approve" icon={Check} onClick={() => void reviewLeave(request.id, 'approved')} /><IconAction label="Deny" icon={X} onClick={() => void reviewLeave(request.id, 'rejected')} /></>}{canCancelRequest && <IconAction label="Cancel request" icon={X} onClick={() => void cancelLeave(request.id)} />}{canDeleteRequest && <IconAction label="Delete leave request" icon={Trash2} onClick={() => deleteLeave(request.id)} />}{!canEditRequest && !canApproveLeave && !canCancelRequest && !canDeleteRequest && <span className={muted(theme)}>—</span>}</div></Cell></tr>; })}</DataTable><div className="mt-8"><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Overtime Approvals</h3><p className={cn('text-sm', muted(theme))}>{overtimeRequests.length} requests</p></div>{canRequestLeave && <button onClick={() => openOvertimeModal()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Plus className="h-4 w-4" />Request Overtime</button>}</div><DataTable headers={['Employee', 'Date', 'Hours', 'Reason', 'Status', 'Actions']} theme={theme}>{overtimeRequests.map((request) => { const requestEmployee = employees.find((employee) => employee.id === request.employee_profile_id); const isOwnRequest = requestEmployee?.user_id === userId; const canEditRequest = canApproveLeave || (isOwnRequest && request.status === 'pending'); const canCancelRequest = isOwnRequest && request.status === 'pending'; const canDeleteRequest = canApproveLeave; return <tr key={request.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(requestEmployee, profiles)}</Cell><Cell>{formatDate(request.work_date)}</Cell><Cell>{Number(request.hours).toFixed(2)}</Cell><Cell>{request.reason || '—'}</Cell><Cell><StatusPill value={request.status} /></Cell><Cell><div className="flex flex-wrap gap-2">{canEditRequest && <IconAction label="Edit overtime request" icon={Pencil} onClick={() => openOvertimeModal(request)} />}{canApproveLeave && request.status === 'pending' && <><IconAction label="Approve" icon={Check} onClick={() => void reviewOvertime(request.id, 'approved')} /><IconAction label="Deny" icon={X} onClick={() => void reviewOvertime(request.id, 'rejected')} /></>}{canCancelRequest && <IconAction label="Cancel request" icon={X} onClick={() => void cancelOvertime(request.id)} />}{canDeleteRequest && <IconAction label="Delete overtime request" icon={Trash2} onClick={() => deleteOvertime(request.id)} />}{!canEditRequest && !canApproveLeave && !canCancelRequest && !canDeleteRequest && <span className={muted(theme)}>—</span>}</div></Cell></tr>; })}</DataTable>{overtimeRequests.length === 0 && <p className={cn('mt-3 rounded-lg border border-dashed p-4 text-sm', muted(theme))}>No overtime requests yet.</p>}</div></div>}
     {tab === 'documents' && <DocumentPanel workspaceId={workspaceId} userId={userId} employee={selected} profiles={profiles} canManage={canManage} theme={theme} onNotice={onNotice} />}
@@ -842,8 +851,8 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   const openAttendanceEntry = (entry: TimeEntry) => {
     setEntryDraft({
       work_date: entry.work_date,
-      clock_in: toDateTimeLocal(entry.clock_in),
-      clock_out: entry.clock_out ? toDateTimeLocal(entry.clock_out) : '',
+      clock_in: toLocalTimeInput(entry.clock_in),
+      clock_out: entry.clock_out ? toLocalTimeInput(entry.clock_out) : '',
       break_seconds: String(entry.break_seconds ?? 0),
     });
     setEntryModal(entry);
@@ -852,13 +861,17 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
     if (!supabase || !entryModal || !canManageAttendance) return;
     const breakSeconds = Number(entryDraft.break_seconds || 0);
     if (!entryDraft.work_date || !entryDraft.clock_in || !Number.isFinite(breakSeconds) || breakSeconds < 0) { onNotice('Enter a valid attendance record.'); return; }
+    const clockInDate = toDateFromLocalParts(entryDraft.work_date, entryDraft.clock_in);
+    const clockOutDate = entryDraft.clock_out ? toDateFromLocalParts(entryDraft.work_date, entryDraft.clock_out) : null;
+    if (Number.isNaN(clockInDate.getTime()) || (clockOutDate && Number.isNaN(clockOutDate.getTime()))) { onNotice('Enter valid date/time values.'); return; }
+    if (clockOutDate && clockOutDate < clockInDate) { onNotice('Clock out must be later than clock in.'); return; }
     const { error } = await supabase.from('time_entries').update({
       work_date: entryDraft.work_date,
-      clock_in: fromDateTimeLocal(entryDraft.clock_in),
-      clock_out: entryDraft.clock_out ? fromDateTimeLocal(entryDraft.clock_out) : null,
+      clock_in: clockInDate.toISOString(),
+      clock_out: clockOutDate ? clockOutDate.toISOString() : null,
       break_seconds: breakSeconds,
     }).eq('id', entryModal.id);
-    if (error) onNotice(error.message); else { setEntryModal(null); await load(); }
+    if (error) onNotice(error.message); else { setEntryModal(null); onNotice('Attendance record saved.'); await load(); }
   };
   const deleteAttendanceEntry = (entry: TimeEntry) => {
     if (!supabase || !canManageAttendance) return;
@@ -884,7 +897,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Employees present" value={String(presentIds.size)} theme={theme} accent /><Metric label="Employees late" value={String(late)} theme={theme} /><Metric label="Employees absent" value={String(absent)} theme={theme} /><Metric label="Employees on leave" value={String(leaveTodayIds.size)} theme={theme} /><Metric label="Total hours" value={formatDuration(totalHours)} theme={theme} /><Metric label="Overtime" value={formatDuration(overtime)} theme={theme} /><Metric label="Draft payroll total" value={formatter.format(filteredPayroll.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Pending leave" value={String(filteredLeave.filter((request) => request.status === 'pending').length)} theme={theme} /></div>
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"><div><h3 className="mb-3 font-bold">Attendance summary</h3><DataTable headers={['Employee', 'Department', 'Days Recorded', 'Hours', 'Overtime', 'Actions']} theme={theme}>{filteredEmployees.map((employee) => { const own = filteredEntries.filter((entry) => entry.employee_profile_id === employee.id); const latestEntry = [...own].sort((a, b) => Date.parse(b.clock_in) - Date.parse(a.clock_in))[0]; const hours = own.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); return <tr key={employee.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employee, profiles)}</Cell><Cell>{employee.department || '—'}</Cell><Cell>{new Set(own.map((entry) => entry.work_date)).size}</Cell><Cell>{formatDuration(hours)}</Cell><Cell>{formatDuration(own.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0))}</Cell><Cell>{canManageAttendance && latestEntry ? <div className="flex gap-2"><IconAction label="Edit latest attendance record" icon={Pencil} onClick={() => openAttendanceEntry(latestEntry)} /><IconAction label="Delete latest attendance record" icon={Trash2} onClick={() => deleteAttendanceEntry(latestEntry)} /></div> : <span className={muted(theme)}>—</span>}</Cell></tr>; })}</DataTable></div><aside className={cn('h-fit rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><h3 className="font-bold">Holidays</h3>{canManageHolidays && <button aria-label="Add holiday" title="Add Holiday" onClick={() => addHoliday()} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', buttonSurface(theme))}><Plus className="h-4 w-4" /></button>}</div><div className="mt-3 space-y-2">{holidays.map((holiday) => <div key={holiday.id} className="flex items-center justify-between gap-2 text-sm"><span><strong className="block">{holiday.name}</strong><span className={muted(theme)}>{formatDate(holiday.holiday_date)}</span></span>{canManageHolidays && <button aria-label="Delete holiday" title="Delete holiday" onClick={() => deleteHoliday(holiday.id)} className="text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button>}</div>)}{holidays.length === 0 && <p className={cn('text-sm', muted(theme))}>No holidays in this range.</p>}</div></aside></div>
     </ModuleFrame>
-    {entryModal && <WorkforceModal title="Edit Attendance Record" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveAttendanceEntry()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Record</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Work Date" type="date" value={entryDraft.work_date} onChange={(value) => setEntryDraft({ ...entryDraft, work_date: value })} theme={theme} /><Field label="Clock In" type="datetime-local" value={entryDraft.clock_in} onChange={(value) => setEntryDraft({ ...entryDraft, clock_in: value })} theme={theme} /><Field label="Clock Out" type="datetime-local" value={entryDraft.clock_out} onChange={(value) => setEntryDraft({ ...entryDraft, clock_out: value })} theme={theme} /><Field label="Break Seconds" type="number" value={entryDraft.break_seconds} onChange={(value) => setEntryDraft({ ...entryDraft, break_seconds: value })} theme={theme} /></div></WorkforceModal>}
+    {entryModal && <WorkforceModal title="Edit Attendance Record" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveAttendanceEntry()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Record</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Work Date" type="date" value={entryDraft.work_date} onChange={(value) => setEntryDraft({ ...entryDraft, work_date: value })} theme={theme} /><FriendlyTimeField label="Clock In" value={entryDraft.clock_in} onChange={(value) => setEntryDraft({ ...entryDraft, clock_in: value })} theme={theme} /><FriendlyTimeField label="Clock Out" value={entryDraft.clock_out} onChange={(value) => setEntryDraft({ ...entryDraft, clock_out: value })} theme={theme} allowBlank /><Field label="Break Seconds" type="number" value={entryDraft.break_seconds} onChange={(value) => setEntryDraft({ ...entryDraft, break_seconds: value })} theme={theme} /></div></WorkforceModal>}
     {holidayModalOpen && <WorkforceModal title="Add holiday" theme={theme} onClose={() => setHolidayModalOpen(false)} footer={<><button type="button" onClick={() => setHolidayModalOpen(false)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveHoliday()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Holiday</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Holiday Date" type="date" value={holidayDraft.holiday_date} onChange={(value) => setHolidayDraft({ ...holidayDraft, holiday_date: value })} theme={theme} /><Field label="Holiday Name" value={holidayDraft.name} onChange={(value) => setHolidayDraft({ ...holidayDraft, name: value })} theme={theme} /></div></WorkforceModal>}
     {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
@@ -1203,17 +1216,71 @@ function formatFileSize(bytes: number) {
 function workedHours(entry: TimeEntry, now: number) { const end = entry.clock_out ? new Date(entry.clock_out).getTime() : now; const activeBreak = entry.break_started_at ? Math.max(0, now - new Date(entry.break_started_at).getTime()) / 1000 : 0; return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3600000 - (entry.break_seconds + activeBreak) / 3600); }
 function formatDuration(hours: number) { const totalMinutes = Math.max(0, Math.round(hours * 60)); return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`; }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
-function formatDate(value: string) { const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value); return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
-
-function toDateTimeLocal(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const offset = date.getTimezoneOffset();
-  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+function formatDate(value: string) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
+  if (Number.isNaN(date.getTime())) return value || '—';
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}-${date.getFullYear()}`;
 }
 
-function fromDateTimeLocal(value: string) {
-  return new Date(value).toISOString();
+function toLocalTimeInput(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function toDateFromLocalParts(dateValue: string, timeValue: string) {
+  return new Date(`${dateValue}T${timeValue || '00:00'}:00`);
+}
+
+function FriendlyTimeField({ label, value, onChange, theme, allowBlank = false }: { label: string; value: string; onChange: (value: string) => void; theme: Theme; allowBlank?: boolean }) {
+  const parsed = parseTimeInput(value);
+  const display = value ? `${String(parsed.hour12).padStart(2, '0')}:${String(parsed.minute).padStart(2, '0')} ${parsed.period}` : '';
+  const setTime = (hour12: number, minute: number, period: 'AM' | 'PM') => {
+    const boundedHour = ((hour12 - 1 + 12) % 12) + 1;
+    const boundedMinute = ((minute % 60) + 60) % 60;
+    const hour24 = period === 'AM' ? (boundedHour === 12 ? 0 : boundedHour) : (boundedHour === 12 ? 12 : boundedHour + 12);
+    onChange(`${String(hour24).padStart(2, '0')}:${String(boundedMinute).padStart(2, '0')}`);
+  };
+  return (
+    <label className="block">
+      <span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span>
+      <div className={cn('rounded-xl border p-3', panel(theme))}>
+        <input
+          readOnly
+          value={display}
+          placeholder={allowBlank ? 'Optional' : 'HH:MM AM/PM'}
+          onFocus={() => { if (!value && !allowBlank) setTime(9, 0, 'AM'); }}
+          className={cn('mb-3 h-10 w-full rounded-lg border px-3 text-sm font-semibold outline-none', theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#E7E3EA] bg-[#F7F8FA]')}
+        />
+        <div className="flex items-center justify-center gap-3">
+          <TimeStepper value={String(parsed.hour12).padStart(2, '0')} onUp={() => setTime(parsed.hour12 + 1, parsed.minute, parsed.period)} onDown={() => setTime(parsed.hour12 - 1, parsed.minute, parsed.period)} theme={theme} />
+          <span className={cn('text-lg font-bold', muted(theme))}>:</span>
+          <TimeStepper value={String(parsed.minute).padStart(2, '0')} onUp={() => setTime(parsed.hour12, parsed.minute + 1, parsed.period)} onDown={() => setTime(parsed.hour12, parsed.minute - 1, parsed.period)} theme={theme} />
+          <div className="grid gap-2">
+            {(['AM', 'PM'] as const).map((period) => (
+              <button key={period} type="button" onClick={() => setTime(parsed.hour12, parsed.minute, period)} className={cn('h-9 rounded-md px-3 text-xs font-bold transition', parsed.period === period && value ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : buttonSurface(theme))}>{period}</button>
+            ))}
+          </div>
+        </div>
+        {allowBlank && value && <button type="button" onClick={() => onChange('')} className={cn('mt-3 text-xs font-semibold', muted(theme))}>Clear time</button>}
+      </div>
+    </label>
+  );
+}
+
+function TimeStepper({ value, onUp, onDown, theme }: { value: string; onUp: () => void; onDown: () => void; theme: Theme }) {
+  return <div className="grid justify-items-center gap-2"><button type="button" onClick={onUp} className={cn('inline-flex h-7 w-10 items-center justify-center rounded-md', buttonSurface(theme))}><ChevronUp className="h-4 w-4 text-[var(--accent-strong)]" /></button><span className={cn('flex h-10 w-14 items-center justify-center rounded-md border text-sm font-bold', theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#E7E3EA] bg-[#F7F8FA]')}>{value}</span><button type="button" onClick={onDown} className={cn('inline-flex h-7 w-10 items-center justify-center rounded-md', buttonSurface(theme))}><ChevronDown className="h-4 w-4 text-[var(--accent-strong)]" /></button></div>;
+}
+
+function parseTimeInput(value: string) {
+  const [hourRaw, minuteRaw] = value.split(':');
+  const hour24 = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const validHour = Number.isFinite(hour24) ? Math.min(23, Math.max(0, hour24)) : 9;
+  const validMinute = Number.isFinite(minute) ? Math.min(59, Math.max(0, minute)) : 0;
+  const period: 'AM' | 'PM' = validHour >= 12 ? 'PM' : 'AM';
+  const hour12 = validHour % 12 || 12;
+  return { hour12, minute: validMinute, period };
 }
 
 function maskSensitiveValue(value: string) {

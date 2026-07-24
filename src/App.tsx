@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -745,7 +745,7 @@ export default function App() {
   }, [marketingHome, notificationPreferences.tabBadges, unreadActivityCount]);
 
   useEffect(() => {
-    if (unreadActivityCount > previousUnreadCountRef.current && document.visibilityState === 'hidden') {
+    if (unreadActivityCount > previousUnreadCountRef.current && (document.visibilityState === 'hidden' || !document.hasFocus())) {
       if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${unreadActivityCount} unread update${unreadActivityCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
       if (notificationPreferences.sound) playNotificationTone();
     }
@@ -2365,9 +2365,9 @@ function Sidebar({
           </div>
         </section>
 
-        <div ref={accountMenuRef} className="relative mt-auto shrink-0 pt-4">
+        <div ref={accountMenuRef} className="relative z-[90] mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[70] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[100] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
                 <Avatar profile={profile} />
                 <div className="min-w-0 flex-1">
@@ -2410,7 +2410,7 @@ function Sidebar({
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                         {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[110] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                         <AccountMenuButton icon={Bell} label="Notifications" onClick={() => openAccountView('notifications')} />
@@ -2429,7 +2429,7 @@ function Sidebar({
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[110] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
@@ -2562,7 +2562,11 @@ function PostRow({
         selected
           ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15'
           : surface(theme),
-        unread && !selected && 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm shadow-[var(--accent-strong)]/10',
+        unread && !selected && (
+          theme === 'dark'
+            ? 'border-[var(--accent)] bg-[var(--accent)]/10 shadow-sm shadow-[var(--accent-strong)]/20'
+            : 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-sm shadow-[var(--accent-strong)]/10'
+        ),
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -2717,6 +2721,7 @@ function ThreadPanel({
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState(false);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2737,8 +2742,19 @@ function ThreadPanel({
   const lockedEmailCommand = !premiumEmail && Boolean(parsedEmailCommand);
   const selectedEmailAccount = emailAccounts.find((account) => account.id === selectedEmailAccountId) ?? emailAccounts.find((account) => account.is_default) ?? emailAccounts[0];
 
-  useEffect(() => {
-    latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  useLayoutEffect(() => {
+    const scrollToBottom = () => {
+      const list = messageListRef.current;
+      if (!list) return;
+      list.scrollTop = list.scrollHeight;
+      latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+    };
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(() => {
+      scrollToBottom();
+      window.setTimeout(scrollToBottom, 0);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [post?.id, comments.length, attachments.length, reactions.length]);
 
   useEffect(() => {
@@ -2965,7 +2981,7 @@ function ThreadPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5 scroll-area">
+      <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto p-5 scroll-area">
         <div className="flex items-start gap-2">
           {forwarding && <MessageSelectionCheckbox checked={selectedMessageIds.has(post.id)} onChange={() => toggleForwardSelection(post.id)} />}
           <div className="min-w-0 flex-1">
@@ -4830,9 +4846,18 @@ function SettingsModal({
     report: 'Report a problem',
   };
 
-  const updateNotificationPreference = (key: keyof NotificationPreferences, value: boolean) => {
-    if (key === 'desktop' && value && 'Notification' in window && Notification.permission === 'default') {
-      void Notification.requestPermission();
+  const updateNotificationPreference = async (key: keyof NotificationPreferences, value: boolean) => {
+    if (key === 'email' && value) return;
+    if (key === 'desktop' && value) {
+      if (!('Notification' in window)) return;
+      if (Notification.permission !== 'granted') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') return;
+      }
+      showDesktopNotification('TriCord Notifications Enabled', {
+        body: 'You will receive alerts while TriCord is open in the background.',
+        tag: 'tricord-notifications-enabled',
+      });
     }
     onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
   };
@@ -5039,14 +5064,14 @@ function SettingsModal({
             </div>
           </div>
           <div className="mt-5 grid gap-3">
-            <NotificationToggle theme={theme} title="Desktop notifications" body="Show system notifications when new activity arrives while TriCord is in the background." checked={notificationPreferences.desktop} onChange={(checked) => updateNotificationPreference('desktop', checked)} />
-            <NotificationToggle theme={theme} title="Sound alerts" body="Play a short sound for new background activity." checked={notificationPreferences.sound} onChange={(checked) => updateNotificationPreference('sound', checked)} />
-            <NotificationToggle theme={theme} title="Browser tab badge" body="Show unread counts in the browser title and favicon." checked={notificationPreferences.tabBadges} onChange={(checked) => updateNotificationPreference('tabBadges', checked)} />
-            <NotificationToggle theme={theme} title="Mentions" body="Count messages that mention your name or email address." checked={notificationPreferences.mentions} onChange={(checked) => updateNotificationPreference('mentions', checked)} />
-            <NotificationToggle theme={theme} title="Direct messages and replies" body="Count new discussion replies from other Hub members." checked={notificationPreferences.directMessages} onChange={(checked) => updateNotificationPreference('directMessages', checked)} />
-            <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => updateNotificationPreference('taskAssignments', checked)} />
-            <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => updateNotificationPreference('announcements', checked)} />
-            <NotificationToggle theme={theme} title="Email notifications" body="Reserve email notifications for important updates when email delivery is enabled for your Hub." checked={notificationPreferences.email} onChange={(checked) => updateNotificationPreference('email', checked)} />
+            <NotificationToggle theme={theme} title="Desktop notifications" body="Show system notifications when new activity arrives while TriCord is in the background." checked={notificationPreferences.desktop} onChange={(checked) => void updateNotificationPreference('desktop', checked)} />
+            <NotificationToggle theme={theme} title="Sound alerts" body="Play a short sound for new background activity." checked={notificationPreferences.sound} onChange={(checked) => void updateNotificationPreference('sound', checked)} />
+            <NotificationToggle theme={theme} title="Browser tab badge" body="Show unread counts in the browser title and favicon." checked={notificationPreferences.tabBadges} onChange={(checked) => void updateNotificationPreference('tabBadges', checked)} />
+            <NotificationToggle theme={theme} title="Mentions" body="Count messages that mention your name or email address." checked={notificationPreferences.mentions} onChange={(checked) => void updateNotificationPreference('mentions', checked)} />
+            <NotificationToggle theme={theme} title="Direct messages and replies" body="Count new discussion replies from other Hub members." checked={notificationPreferences.directMessages} onChange={(checked) => void updateNotificationPreference('directMessages', checked)} />
+            <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => void updateNotificationPreference('taskAssignments', checked)} />
+            <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => void updateNotificationPreference('announcements', checked)} />
+            <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need the transactional email delivery workflow enabled before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
           </div>
         </section>}
 
@@ -5578,14 +5603,14 @@ function StatusBadge({ label, tone }: { label: string; tone: 'accent' | 'success
   return <span className={cn('inline-flex rounded-full px-2.5 py-1 text-xs font-semibold', className)}>{label}</span>;
 }
 
-function NotificationToggle({ theme, title, body, checked, onChange }: { theme: 'light' | 'dark'; title: string; body: string; checked: boolean; onChange: (checked: boolean) => void }) {
+function NotificationToggle({ theme, title, body, checked, disabled = false, onChange }: { theme: 'light' | 'dark'; title: string; body: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <label className={cn('flex items-start justify-between gap-4 rounded-lg border p-3', subtleButton(theme))}>
+    <label className={cn('flex items-start justify-between gap-4 rounded-lg border p-3', subtleButton(theme), disabled && 'cursor-not-allowed opacity-60')}>
       <span className="min-w-0">
         <span className="block text-sm font-bold">{title}</span>
         <span className={cn('mt-1 block text-xs leading-5', muted(theme))}>{body}</span>
       </span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent-strong)]" />
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent-strong)]" />
     </label>
   );
 }
@@ -6528,7 +6553,13 @@ function formatMessageTime(timestamp: string) {
 }
 
 function formatTaskDate(value: string) {
-  return new Date(`${toTaskDateKey(value)}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const datePart = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}-${date.getFullYear()}`;
+  const hasTime = !/T00:00(?::00)?(?:\.000)?Z?$/.test(value) && value.includes('T');
+  if (!hasTime) return datePart;
+  const timePart = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+  return `${datePart} ${timePart}`;
 }
 
 function toTaskDateKey(value: string) {

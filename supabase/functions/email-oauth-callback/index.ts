@@ -131,8 +131,13 @@ function oauthRedirectUri() {
   return Deno.env.get('EMAIL_OAUTH_REDIRECT_URL') || `${requiredEnv('SUPABASE_URL')}/functions/v1/email-oauth-callback`;
 }
 
-function redirectWithStatus(query: string) {
+/*function redirectWithStatus(query: string) {
   const appOrigin = (Deno.env.get('APP_ORIGIN') || 'https://tricord.cc').replace(/\/$/, '');
+  return Response.redirect(`${appOrigin}/app?${query}`, 302);
+}*/
+
+function redirectWithStatus(query: string) {
+  const appOrigin = "https://tricordapp.netlify.app";
   return Response.redirect(`${appOrigin}/app?${query}`, 302);
 }
 

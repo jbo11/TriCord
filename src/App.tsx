@@ -2289,7 +2289,7 @@ function Sidebar({
       <div className={cn('fixed inset-0 z-40 bg-black/30 lg:hidden', sidebarOpen ? 'block' : 'hidden')} onClick={onClose} />
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-visible border-r px-4 py-5 transition-transform lg:static lg:z-auto lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-visible border-r px-4 py-5 transition-transform lg:static lg:z-[9000] lg:translate-x-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           theme === 'dark' ? 'border-white/10 bg-[#111018]' : 'border-[#E7E3EA] bg-white',
         )}
@@ -2414,7 +2414,7 @@ function Sidebar({
 
         <div ref={accountMenuRef} className="relative z-[9500] mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[9501] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl scroll-area">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[9501] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg lg:overflow-visible border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl scroll-area">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
                 <Avatar profile={profile} />
                 <div className="min-w-0 flex-1">

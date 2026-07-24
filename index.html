@@ -36,6 +36,20 @@
     <meta name="twitter:image" content="https://jbo11.github.io/TriCord/tricord-logo.png" />
 
     <title>TriCord | One work hub for growing teams</title>
+    <script>
+      (function () {
+        try {
+          var redirectPath = window.sessionStorage.getItem("tricord_redirect_path");
+          if (!redirectPath) return;
+          window.sessionStorage.removeItem("tricord_redirect_path");
+          if (redirectPath !== window.location.pathname + window.location.search + window.location.hash) {
+            window.history.replaceState({}, "", redirectPath);
+          }
+        } catch (error) {
+          // Ignore private browsing storage failures.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import {
   Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Clock3, Coffee, ExternalLink, FileUp,
   Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Users,
-  Trash2, X,
+  Trash2, Undo2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../lib/utils';
@@ -126,7 +126,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [settings, setSettings] = useState<EmployeeTimekeepingPolicy | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
-  const [entryModal, setEntryModal] = useState<{ id: string; workDate: string; clockIn: string; clockOut: string } | null>(null);
+  const [entryModal, setEntryModal] = useState<{ id: string; clockInDate: string; clockIn: string; clockOutDate: string; clockOut: string } | null>(null);
   const [disputeModal, setDisputeModal] = useState<{ entry: TimeEntry; reason: string } | null>(null);
   const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string; pending?: boolean; employeeProfileId?: string } | null>(null);
   const policySignatureRef = useRef<string | null>(null);
@@ -211,6 +211,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const visibleEntries = canConfigure || canManageEntries ? attendanceEntries : ownEntries;
   const isOwnEntry = (entry: TimeEntry) => entry.employee_profile_id === employee?.id;
   const canConfirmEntry = (entry: TimeEntry) => Boolean(entry.clock_out) && !entry.confirmed_at && entry.dispute_status !== 'pending' && (canManageEntries || isOwnEntry(entry));
+  const canUnconfirmEntry = (entry: TimeEntry) => Boolean(entry.confirmed_at) && canManageEntries;
   const canDisputeEntry = (entry: TimeEntry) => Boolean(entry.clock_out) && isOwnEntry(entry) && entry.dispute_status !== 'pending';
   const eventsByEntry = useMemo(() => {
     const grouped = new Map<string, TimeEvent[]>();
@@ -317,15 +318,16 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     if (!canManageEntries) return;
     setEntryModal({
       id: entry.id,
-      workDate: entry.work_date,
+      clockInDate: toLocalDateInput(entry.clock_in) || entry.work_date,
       clockIn: toLocalTimeInput(entry.clock_in),
+      clockOutDate: entry.clock_out ? toLocalDateInput(entry.clock_out) : entry.work_date,
       clockOut: entry.clock_out ? toLocalTimeInput(entry.clock_out) : '',
     });
   };
   const saveEntryAdjustment = async () => {
     if (!supabase || !canManageEntries || !entryModal) return;
-    const clockInDate = toDateFromLocalParts(entryModal.workDate, entryModal.clockIn);
-    const clockOutDate = entryModal.clockOut.trim() ? toDateFromLocalParts(entryModal.workDate, entryModal.clockOut) : null;
+    const clockInDate = toDateFromLocalParts(entryModal.clockInDate, entryModal.clockIn);
+    const clockOutDate = entryModal.clockOut.trim() ? toDateFromLocalParts(entryModal.clockOutDate || entryModal.clockInDate, entryModal.clockOut) : null;
     if (Number.isNaN(clockInDate.getTime()) || (clockOutDate && Number.isNaN(clockOutDate.getTime()))) {
       onNotice('Enter valid date/time values.');
       return;
@@ -334,7 +336,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
       onNotice('Clock out must be later than clock in.');
       return;
     }
-    const { error } = await supabase.from('time_entries').update({ work_date: entryModal.workDate, clock_in: clockInDate.toISOString(), clock_out: clockOutDate ? clockOutDate.toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entryModal.id);
+    const { error } = await supabase.from('time_entries').update({ work_date: entryModal.clockInDate, clock_in: clockInDate.toISOString(), clock_out: clockOutDate ? clockOutDate.toISOString() : null, updated_at: new Date().toISOString() }).eq('id', entryModal.id);
     if (error) onNotice(error.message); else { setEntryModal(null); onNotice('Attendance entry updated.'); await load(); }
   };
   const deleteEntry = (entry: TimeEntry) => {
@@ -356,6 +358,11 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     if (!supabase || !canConfirmEntry(entry)) return;
     const { error } = await supabase.rpc('confirm_time_entry', { target_entry_id: entry.id });
     if (error) onNotice(error.message); else { onNotice('Attendance record confirmed.'); await load(); }
+  };
+  const unconfirmEntry = async (entry: TimeEntry) => {
+    if (!supabase || !canUnconfirmEntry(entry)) return;
+    const { error } = await supabase.rpc('unconfirm_time_entry', { target_entry_id: entry.id });
+    if (error) onNotice(error.message); else { onNotice('Attendance record unconfirmed.'); await load(); }
   };
   const confirmAllEntries = async () => {
     if (!supabase) return;
@@ -430,6 +437,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
                     <Cell><div className="flex flex-wrap gap-2">
                       {canViewEvidence && <IconAction label="View clock-in evidence" icon={ShieldCheck} onClick={() => setExpandedEvidenceEntryId(expanded ? '' : entry.id)} />}
                       {canConfirmEntry(entry) && <IconAction label="Confirm attendance" icon={Check} onClick={() => void confirmEntry(entry)} />}
+                      {canUnconfirmEntry(entry) && <IconAction label="Unconfirm attendance" icon={Undo2} onClick={() => void unconfirmEntry(entry)} />}
                       {canDisputeEntry(entry) && <IconAction label="Dispute or correct attendance" icon={Pencil} onClick={() => setDisputeModal({ entry, reason: entry.dispute_reason ?? '' })} />}
                       {canManageEntries && entry.dispute_status === 'pending' && <><IconAction label="Approve dispute" icon={Check} onClick={() => void reviewDispute(entry, true)} /><IconAction label="Decline dispute" icon={X} onClick={() => void reviewDispute(entry, false)} /></>}
                       {canManageEntries && <IconAction label="Edit attendance" icon={Pencil} onClick={() => openAdjustEntry(entry)} />}
@@ -469,7 +477,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
         </aside>}
       </div>
     </ModuleFrame>
-    {entryModal && <WorkforceModal title="Edit Attendance Entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Entry</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Work Date" type="date" value={entryModal.workDate} onChange={(value) => setEntryModal({ ...entryModal, workDate: value })} theme={theme} /><FriendlyTimeField label="Clock In" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /><FriendlyTimeField label="Clock Out (Optional)" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} allowBlank /></div></WorkforceModal>}
+    {entryModal && <WorkforceModal title="Edit Attendance Entry" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveEntryAdjustment()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Entry</button></>}><div className="grid gap-4 lg:grid-cols-2"><section className={cn('rounded-xl border p-4', panel(theme))}><h4 className="mb-3 text-sm font-bold">Clock In</h4><Field label="Clock In Date" type="date" value={entryModal.clockInDate} onChange={(value) => setEntryModal({ ...entryModal, clockInDate: value })} theme={theme} /><div className="mt-3"><FriendlyTimeField label="Clock In Time" value={entryModal.clockIn} onChange={(value) => setEntryModal({ ...entryModal, clockIn: value })} theme={theme} /></div></section><section className={cn('rounded-xl border p-4', panel(theme))}><h4 className="mb-3 text-sm font-bold">Clock Out</h4><Field label="Clock Out Date" type="date" value={entryModal.clockOutDate} onChange={(value) => setEntryModal({ ...entryModal, clockOutDate: value })} theme={theme} /><div className="mt-3"><FriendlyTimeField label="Clock Out Time" value={entryModal.clockOut} onChange={(value) => setEntryModal({ ...entryModal, clockOut: value })} theme={theme} allowBlank /></div></section></div></WorkforceModal>}
     {disputeModal && <WorkforceModal title="Dispute Attendance Record" theme={theme} onClose={() => setDisputeModal(null)} footer={<><button type="button" onClick={() => setDisputeModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void submitDispute()} disabled={!disputeModal.reason.trim()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)] disabled:opacity-50">Submit Dispute</button></>}><label className="grid gap-2 text-sm font-semibold">What needs to be corrected?<textarea value={disputeModal.reason} onChange={(event) => setDisputeModal({ ...disputeModal, reason: event.target.value })} className={cn('min-h-32 rounded-lg border p-3 outline-none', panel(theme))} placeholder="Explain what looks incorrect and what the correct time should be." /></label></WorkforceModal>}
     {policyNotice && <WorkforceModal title={policyNotice.title} theme={theme} onClose={() => setPolicyNotice(null)} footer={policyNotice.pending ? <><button type="button" onClick={() => void respondToPendingPolicy(false)} disabled={saving} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Decline</button><button type="button" onClick={() => void respondToPendingPolicy(true)} disabled={saving} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Accept</button></> : <button type="button" onClick={() => setPolicyNotice(null)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Confirm</button>}><p className={cn('text-sm leading-6', muted(theme))}>{policyNotice.body}</p></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
@@ -827,7 +835,7 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
 }
 
 function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotice }: WorkforceProps) {
-  const [employees, setEmployees] = useState<EmployeeProfile[]>([]); const [entries, setEntries] = useState<TimeEntry[]>([]); const [leave, setLeave] = useState<LeaveRequest[]>([]); const [payroll, setPayroll] = useState<PayrollItem[]>([]); const [settings, setSettings] = useState<WorkforceSettings | null>(null); const [timeSettings, setTimeSettings] = useState<TimekeepingSettings | null>(null); const [holidays, setHolidays] = useState<WorkforceHoliday[]>([]); const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(today()); const [department, setDepartment] = useState('all'); const [employeeId, setEmployeeId] = useState('all'); const [holidayModalOpen, setHolidayModalOpen] = useState(false); const [holidayDraft, setHolidayDraft] = useState({ holiday_date: today(), name: '' }); const [entryModal, setEntryModal] = useState<TimeEntry | null>(null); const [entryDraft, setEntryDraft] = useState({ work_date: today(), clock_in: '', clock_out: '', break_seconds: '0' }); const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
+  const [employees, setEmployees] = useState<EmployeeProfile[]>([]); const [entries, setEntries] = useState<TimeEntry[]>([]); const [leave, setLeave] = useState<LeaveRequest[]>([]); const [payroll, setPayroll] = useState<PayrollItem[]>([]); const [settings, setSettings] = useState<WorkforceSettings | null>(null); const [timeSettings, setTimeSettings] = useState<TimekeepingSettings | null>(null); const [holidays, setHolidays] = useState<WorkforceHoliday[]>([]); const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(today()); const [department, setDepartment] = useState('all'); const [employeeId, setEmployeeId] = useState('all'); const [holidayModalOpen, setHolidayModalOpen] = useState(false); const [holidayDraft, setHolidayDraft] = useState({ holiday_date: today(), name: '' }); const [entryModal, setEntryModal] = useState<TimeEntry | null>(null); const [entryDraft, setEntryDraft] = useState({ clock_in_date: today(), clock_in: '', clock_out_date: today(), clock_out: '', break_seconds: '0' }); const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const canManageHolidays = role === 'owner' || Boolean(capabilities?.manage_hr);
   const canManageAttendance = role === 'owner' || Boolean(capabilities?.correct_attendance);
   const load = useCallback(async () => { if (!supabase) return; const [e, t, l, p, s, ts, h] = await Promise.all([supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId), supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).gte('work_date', from).lte('work_date', to), supabase.from('leave_requests').select('*').eq('workspace_id', workspaceId).lte('start_date', to).gte('end_date', from), supabase.from('payroll_items').select('*').eq('workspace_id', workspaceId), supabase.from('workforce_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(), supabase.from('timekeeping_settings').select('*').eq('workspace_id', workspaceId).maybeSingle(), supabase.from('workforce_holidays').select('*').eq('workspace_id', workspaceId).gte('holiday_date', from).lte('holiday_date', to).order('holiday_date')]); const error = e.error ?? t.error ?? l.error ?? p.error ?? s.error ?? ts.error ?? h.error; if (error) return onNotice(error.message); setEmployees((e.data ?? []) as EmployeeProfile[]); setEntries((t.data ?? []) as TimeEntry[]); setLeave((l.data ?? []) as LeaveRequest[]); setPayroll((p.data ?? []) as PayrollItem[]); setSettings(s.data as WorkforceSettings | null); setTimeSettings(ts.data as TimekeepingSettings | null); setHolidays((h.data ?? []) as WorkforceHoliday[]); }, [from, onNotice, to, workspaceId]); useEffect(() => { void load(); }, [load]);
@@ -850,8 +858,9 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   };
   const openAttendanceEntry = (entry: TimeEntry) => {
     setEntryDraft({
-      work_date: entry.work_date,
+      clock_in_date: toLocalDateInput(entry.clock_in) || entry.work_date,
       clock_in: toLocalTimeInput(entry.clock_in),
+      clock_out_date: entry.clock_out ? toLocalDateInput(entry.clock_out) : entry.work_date,
       clock_out: entry.clock_out ? toLocalTimeInput(entry.clock_out) : '',
       break_seconds: String(entry.break_seconds ?? 0),
     });
@@ -860,13 +869,13 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
   const saveAttendanceEntry = async () => {
     if (!supabase || !entryModal || !canManageAttendance) return;
     const breakSeconds = Number(entryDraft.break_seconds || 0);
-    if (!entryDraft.work_date || !entryDraft.clock_in || !Number.isFinite(breakSeconds) || breakSeconds < 0) { onNotice('Enter a valid attendance record.'); return; }
-    const clockInDate = toDateFromLocalParts(entryDraft.work_date, entryDraft.clock_in);
-    const clockOutDate = entryDraft.clock_out ? toDateFromLocalParts(entryDraft.work_date, entryDraft.clock_out) : null;
+    if (!entryDraft.clock_in_date || !entryDraft.clock_in || !Number.isFinite(breakSeconds) || breakSeconds < 0) { onNotice('Enter a valid attendance record.'); return; }
+    const clockInDate = toDateFromLocalParts(entryDraft.clock_in_date, entryDraft.clock_in);
+    const clockOutDate = entryDraft.clock_out ? toDateFromLocalParts(entryDraft.clock_out_date || entryDraft.clock_in_date, entryDraft.clock_out) : null;
     if (Number.isNaN(clockInDate.getTime()) || (clockOutDate && Number.isNaN(clockOutDate.getTime()))) { onNotice('Enter valid date/time values.'); return; }
     if (clockOutDate && clockOutDate < clockInDate) { onNotice('Clock out must be later than clock in.'); return; }
     const { error } = await supabase.from('time_entries').update({
-      work_date: entryDraft.work_date,
+      work_date: entryDraft.clock_in_date,
       clock_in: clockInDate.toISOString(),
       clock_out: clockOutDate ? clockOutDate.toISOString() : null,
       break_seconds: breakSeconds,
@@ -897,7 +906,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Employees present" value={String(presentIds.size)} theme={theme} accent /><Metric label="Employees late" value={String(late)} theme={theme} /><Metric label="Employees absent" value={String(absent)} theme={theme} /><Metric label="Employees on leave" value={String(leaveTodayIds.size)} theme={theme} /><Metric label="Total hours" value={formatDuration(totalHours)} theme={theme} /><Metric label="Overtime" value={formatDuration(overtime)} theme={theme} /><Metric label="Draft payroll total" value={formatter.format(filteredPayroll.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Pending leave" value={String(filteredLeave.filter((request) => request.status === 'pending').length)} theme={theme} /></div>
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"><div><h3 className="mb-3 font-bold">Attendance summary</h3><DataTable headers={['Employee', 'Department', 'Days Recorded', 'Hours', 'Overtime', 'Actions']} theme={theme}>{filteredEmployees.map((employee) => { const own = filteredEntries.filter((entry) => entry.employee_profile_id === employee.id); const latestEntry = [...own].sort((a, b) => Date.parse(b.clock_in) - Date.parse(a.clock_in))[0]; const hours = own.reduce((sum, entry) => sum + workedHours(entry, Date.now()), 0); return <tr key={employee.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employee, profiles)}</Cell><Cell>{employee.department || '—'}</Cell><Cell>{new Set(own.map((entry) => entry.work_date)).size}</Cell><Cell>{formatDuration(hours)}</Cell><Cell>{formatDuration(own.reduce((sum, entry) => sum + Math.max(0, workedHours(entry, Date.now()) - 8), 0))}</Cell><Cell>{canManageAttendance && latestEntry ? <div className="flex gap-2"><IconAction label="Edit latest attendance record" icon={Pencil} onClick={() => openAttendanceEntry(latestEntry)} /><IconAction label="Delete latest attendance record" icon={Trash2} onClick={() => deleteAttendanceEntry(latestEntry)} /></div> : <span className={muted(theme)}>—</span>}</Cell></tr>; })}</DataTable></div><aside className={cn('h-fit rounded-lg border p-4', panel(theme))}><div className="flex items-center justify-between"><h3 className="font-bold">Holidays</h3>{canManageHolidays && <button aria-label="Add holiday" title="Add Holiday" onClick={() => addHoliday()} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', buttonSurface(theme))}><Plus className="h-4 w-4" /></button>}</div><div className="mt-3 space-y-2">{holidays.map((holiday) => <div key={holiday.id} className="flex items-center justify-between gap-2 text-sm"><span><strong className="block">{holiday.name}</strong><span className={muted(theme)}>{formatDate(holiday.holiday_date)}</span></span>{canManageHolidays && <button aria-label="Delete holiday" title="Delete holiday" onClick={() => deleteHoliday(holiday.id)} className="text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button>}</div>)}{holidays.length === 0 && <p className={cn('text-sm', muted(theme))}>No holidays in this range.</p>}</div></aside></div>
     </ModuleFrame>
-    {entryModal && <WorkforceModal title="Edit Attendance Record" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveAttendanceEntry()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Record</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Work Date" type="date" value={entryDraft.work_date} onChange={(value) => setEntryDraft({ ...entryDraft, work_date: value })} theme={theme} /><FriendlyTimeField label="Clock In" value={entryDraft.clock_in} onChange={(value) => setEntryDraft({ ...entryDraft, clock_in: value })} theme={theme} /><FriendlyTimeField label="Clock Out" value={entryDraft.clock_out} onChange={(value) => setEntryDraft({ ...entryDraft, clock_out: value })} theme={theme} allowBlank /><Field label="Break Seconds" type="number" value={entryDraft.break_seconds} onChange={(value) => setEntryDraft({ ...entryDraft, break_seconds: value })} theme={theme} /></div></WorkforceModal>}
+    {entryModal && <WorkforceModal title="Edit Attendance Record" theme={theme} onClose={() => setEntryModal(null)} footer={<><button type="button" onClick={() => setEntryModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveAttendanceEntry()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Record</button></>}><div className="grid gap-4 lg:grid-cols-2"><section className={cn('rounded-xl border p-4', panel(theme))}><h4 className="mb-3 text-sm font-bold">Clock In</h4><Field label="Clock In Date" type="date" value={entryDraft.clock_in_date} onChange={(value) => setEntryDraft({ ...entryDraft, clock_in_date: value })} theme={theme} /><div className="mt-3"><FriendlyTimeField label="Clock In Time" value={entryDraft.clock_in} onChange={(value) => setEntryDraft({ ...entryDraft, clock_in: value })} theme={theme} /></div></section><section className={cn('rounded-xl border p-4', panel(theme))}><h4 className="mb-3 text-sm font-bold">Clock Out</h4><Field label="Clock Out Date" type="date" value={entryDraft.clock_out_date} onChange={(value) => setEntryDraft({ ...entryDraft, clock_out_date: value })} theme={theme} /><div className="mt-3"><FriendlyTimeField label="Clock Out Time" value={entryDraft.clock_out} onChange={(value) => setEntryDraft({ ...entryDraft, clock_out: value })} theme={theme} allowBlank /></div><div className="mt-3"><Field label="Break Seconds" type="number" value={entryDraft.break_seconds} onChange={(value) => setEntryDraft({ ...entryDraft, break_seconds: value })} theme={theme} /></div></section></div></WorkforceModal>}
     {holidayModalOpen && <WorkforceModal title="Add holiday" theme={theme} onClose={() => setHolidayModalOpen(false)} footer={<><button type="button" onClick={() => setHolidayModalOpen(false)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveHoliday()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Holiday</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Holiday Date" type="date" value={holidayDraft.holiday_date} onChange={(value) => setHolidayDraft({ ...holidayDraft, holiday_date: value })} theme={theme} /><Field label="Holiday Name" value={holidayDraft.name} onChange={(value) => setHolidayDraft({ ...holidayDraft, name: value })} theme={theme} /></div></WorkforceModal>}
     {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
@@ -1226,6 +1235,16 @@ function toLocalTimeInput(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function toLocalDateInput(value: string | null | undefined) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function toDateFromLocalParts(dateValue: string, timeValue: string) {

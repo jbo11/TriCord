@@ -493,6 +493,7 @@ export default function App() {
   const [emailAccounts, setEmailAccounts] = useState<UserEmailAccount[]>([]);
   const [selectedEmailAccountId, setSelectedEmailAccountId] = useState('');
   const [lastSeenActivityAt, setLastSeenActivityAt] = useState(new Date().toISOString());
+  const [liveUnreadPostIds, setLiveUnreadPostIds] = useState<Set<string>>(() => new Set());
   const selectedPostIdRef = useRef('');
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
@@ -590,21 +591,23 @@ export default function App() {
     return Math.max(commentCount + mentionCount, activePostUpdateCount) + postCount + assignedTaskCount;
   }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks, workspaceId]);
   const unreadPostIds = useMemo(() => {
-    if (!session?.user.id || !lastSeenActivityAt) return new Set<string>();
+    const next = new Set(liveUnreadPostIds);
+    if (!session?.user.id || !lastSeenActivityAt) return next;
     const cutoff = Date.parse(lastSeenActivityAt);
-    if (!Number.isFinite(cutoff)) return new Set<string>();
-    return new Set(
-      posts
-        .filter((post) => Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId))
-        .map((post) => post.id),
-    );
-  }, [isViewingActiveDiscussion, lastSeenActivityAt, posts, selectedPostId, session?.user.id]);
+    if (!Number.isFinite(cutoff)) return next;
+    posts
+      .filter((post) => Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId))
+      .forEach((post) => next.add(post.id));
+    return next;
+  }, [isViewingActiveDiscussion, lastSeenActivityAt, liveUnreadPostIds, posts, selectedPostId, session?.user.id]);
+  const notificationUnreadCount = Math.max(unreadActivityCount, unreadPostIds.size);
 
   const markWorkspaceActivitySeen = useCallback(() => {
     if (!unreadSeenKey || typeof window === 'undefined') return;
     const now = new Date().toISOString();
     window.localStorage.setItem(unreadSeenKey, now);
     setLastSeenActivityAt(now);
+    setLiveUnreadPostIds(new Set());
   }, [unreadSeenKey]);
 
   const openBillingPortal = useCallback(async (targetWorkspaceId = workspaceId) => {
@@ -739,18 +742,20 @@ export default function App() {
 
   useEffect(() => {
     if (marketingHome) return;
-    const visibleCount = notificationPreferences.tabBadges ? unreadActivityCount : 0;
+    const visibleCount = notificationPreferences.tabBadges ? notificationUnreadCount : 0;
     document.title = visibleCount > 0 ? `(${visibleCount}) TriCord` : 'TriCord';
     updateFaviconBadge(visibleCount, notificationPreferences.tabBadges);
-  }, [marketingHome, notificationPreferences.tabBadges, unreadActivityCount]);
+  }, [marketingHome, notificationPreferences.tabBadges, notificationUnreadCount]);
 
   useEffect(() => {
-    if (unreadActivityCount > previousUnreadCountRef.current && (document.visibilityState === 'hidden' || !document.hasFocus())) {
-      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${unreadActivityCount} unread update${unreadActivityCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
+    const hasNewActivity = notificationUnreadCount > previousUnreadCountRef.current;
+    const isBackground = document.visibilityState === 'hidden' || !document.hasFocus();
+    if (hasNewActivity && (isBackground || !isViewingActiveDiscussion)) {
       if (notificationPreferences.sound) playNotificationTone();
+      if (notificationPreferences.desktop && isBackground) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
     }
-    previousUnreadCountRef.current = unreadActivityCount;
-  }, [notificationPreferences.desktop, notificationPreferences.sound, unreadActivityCount]);
+    previousUnreadCountRef.current = notificationUnreadCount;
+  }, [isViewingActiveDiscussion, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1265,7 +1270,18 @@ export default function App() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `workspace_id=eq.${workspaceId}` }, (payload) => {
         const changedPostId = String((payload.new as { post_id?: string })?.post_id ?? (payload.old as { post_id?: string })?.post_id ?? '');
+        const authorId = String((payload.new as { author_id?: string })?.author_id ?? '');
         const activePostId = selectedPostIdRef.current;
+        const isOwnInsert = authorId === session.user.id;
+        const isVisibleActivePost = payload.eventType === 'INSERT' && changedPostId && activePostId === changedPostId && view === 'feed' && chatOpen && document.visibilityState === 'visible' && document.hasFocus();
+        if (payload.eventType === 'INSERT' && changedPostId && !isOwnInsert && !isVisibleActivePost) {
+          setLiveUnreadPostIds((current) => {
+            if (current.has(changedPostId)) return current;
+            const next = new Set(current);
+            next.add(changedPostId);
+            return next;
+          });
+        }
         if (activePostId && (!changedPostId || changedPostId === activePostId)) void loadComments(activePostId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments', filter: `workspace_id=eq.${workspaceId}` }, () => {
@@ -1301,7 +1317,7 @@ export default function App() {
       if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [loadComments, loadWorkspaceData, session?.access_token, workspaceId]);
+  }, [chatOpen, loadComments, loadWorkspaceData, session?.access_token, session?.user.id, view, workspaceId]);
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.user.id) return;
@@ -1560,6 +1576,12 @@ export default function App() {
                               onClick={() => {
                                 setSelectedPostId(post.id);
                                 setChatOpen(true);
+                                setLiveUnreadPostIds((current) => {
+                                  if (!current.has(post.id)) return current;
+                                  const next = new Set(current);
+                                  next.delete(post.id);
+                                  return next;
+                                });
                               }}
                               canManage={post.author_id === session.user.id || canModerateContent}
                               onEdit={() => setEditingPost(post)}
@@ -2365,9 +2387,9 @@ function Sidebar({
           </div>
         </section>
 
-        <div ref={accountMenuRef} className="relative z-[90] mt-auto shrink-0 pt-4">
+        <div ref={accountMenuRef} className="relative z-[9000] mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[100] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[9001] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
                 <Avatar profile={profile} />
                 <div className="min-w-0 flex-1">
@@ -2410,7 +2432,7 @@ function Sidebar({
                         <AccountMenuButton icon={Settings} label="Hub Settings" onClick={() => openAccountView('settings')} />
                         {currentRole === 'owner' && <AccountMenuButton icon={CreditCard} label="Subscription" onClick={() => openAccountView('subscription')} />}
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[110] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[9002] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
                         <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                         <AccountMenuButton icon={Bell} label="Notifications" onClick={() => openAccountView('notifications')} />
@@ -2429,7 +2451,7 @@ function Sidebar({
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[110] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] z-[9002] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
                         <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
@@ -2560,7 +2582,7 @@ function PostRow({
       className={cn(
         'w-full rounded-lg border p-4 text-left transition',
         selected
-          ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15'
+          ? cn(surface(theme), 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15', unread && (theme === 'dark' ? 'bg-[var(--accent)]/12' : 'bg-[var(--accent-soft)]'))
           : surface(theme),
         unread && !selected && (
           theme === 'dark'

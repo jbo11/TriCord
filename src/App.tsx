@@ -2335,7 +2335,7 @@ function Sidebar({
                 aria-label={roomCompactSettings.all ? 'Expand all rooms' : 'Collapse all rooms'}
                 title={roomCompactSettings.all ? 'Expand all rooms' : 'Collapse all rooms'}
                 onClick={toggleAllRoomCompact}
-                className={cn('mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition', roomCompactSettings.all ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
+                className={cn('mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition', /*roomCompactSettings.all ? 'bg-[var(--accent)] text-[var(--accent-ink)]' :*/ theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
               >
                 {roomCompactSettings.all ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
               </button>

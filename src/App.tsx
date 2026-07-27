@@ -5008,11 +5008,11 @@ function TaskModal({
               ))}
             </select>
           </label>
-          <TaskDateTimeField label="Due Date And Time" value={dueAt} onChange={(value) => setDraft((current) => ({ ...current, dueAt: value }))} theme={theme} />
+          <label className="grid gap-2 text-sm font-semibold">Recurring<select value={recurrenceRule} onChange={(event) => setDraft((current) => ({ ...current, recurrenceRule: event.target.value as typeof recurrenceRule }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="none">Does Not Repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <TaskDateTimeField label="Reminder" value={reminderAt} onChange={(value) => setDraft((current) => ({ ...current, reminderAt: value }))} theme={theme} />
-          <label className="grid gap-2 text-sm font-semibold">Recurring<select value={recurrenceRule} onChange={(event) => setDraft((current) => ({ ...current, recurrenceRule: event.target.value as typeof recurrenceRule }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="none">Does Not Repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+          <TaskDateTimeField label="Due Date And Time" value={dueAt} onChange={(value) => setDraft((current) => ({ ...current, dueAt: value }))} theme={theme} />
         </div>
         {recurrenceRule === 'custom' && <label className="grid gap-2 text-sm font-semibold">Custom Schedule<input value={recurrenceCustom} onChange={(event) => setDraft((current) => ({ ...current, recurrenceCustom: event.target.value }))} placeholder="Example: every weekday, every 2 weeks" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>}
         <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">

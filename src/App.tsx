@@ -855,7 +855,7 @@ export default function App() {
   useEffect(() => {
     if (!unreadSeenKey || !isViewingActiveDiscussion || document.visibilityState !== 'visible') return;
     markVisibleDiscussionActivitySeen();
-  }, [comments.length, isViewingActiveDiscussion, markVisibleDiscussionActivitySeen, posts.length, tasks.length, unreadSeenKey]);
+  }, [comments.length, isViewingActiveDiscussion, markVisibleDiscussionActivitySeen, posts.length, selectedPost?.last_activity_at, selectedPostId, tasks.length, unreadSeenKey]);
 
   useEffect(() => {
     if (marketingHome) return;
@@ -869,16 +869,20 @@ export default function App() {
       previousUnreadCountRef.current = notificationUnreadCount;
       return;
     }
+    const shouldNotify = notificationUnreadCount > previousUnreadCountRef.current && (document.visibilityState !== 'visible' || !document.hasFocus());
+    const notifyBackgroundActivity = () => {
+      if (!shouldNotify) return;
+      if (notificationPreferences.sound) playNotificationTone();
+      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
+    };
     if (!lastNotifiedActivityRef.current) {
       lastNotifiedActivityRef.current = latestNotificationActivityAt;
+      notifyBackgroundActivity();
       previousUnreadCountRef.current = notificationUnreadCount;
       return;
     }
     const hasNewActivity = Date.parse(latestNotificationActivityAt) > Date.parse(lastNotifiedActivityRef.current);
-    if (hasNewActivity) {
-      if (notificationPreferences.sound) playNotificationTone();
-      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
-    }
+    if (hasNewActivity) notifyBackgroundActivity();
     if (hasNewActivity) lastNotifiedActivityRef.current = latestNotificationActivityAt;
     previousUnreadCountRef.current = notificationUnreadCount;
   }, [latestNotificationActivityAt, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
@@ -2961,6 +2965,7 @@ function ThreadPanel({
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
   const loadedDraftKeyRef = useRef('');
   const skipNextDraftSaveRef = useRef(false);
@@ -3173,21 +3178,33 @@ function ThreadPanel({
     });
   };
 
-  const startReplyBoxResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const startReplyBoxResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
+    event.stopPropagation();
     const startY = event.clientY;
     const startHeight = replyBoxHeight;
+    const panelHeight = composerRef.current?.closest('aside')?.getBoundingClientRect().height ?? window.innerHeight;
+    const maxHeight = Math.max(160, Math.floor(panelHeight * 0.75));
+    const minHeight = 72;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
-      const nextHeight = Math.min(260, Math.max(72, startHeight + startY - moveEvent.clientY));
+      moveEvent.preventDefault();
+      const nextHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + startY - moveEvent.clientY));
       setReplyBoxHeight(nextHeight);
     };
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
     };
 
-    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
     window.addEventListener('pointerup', handlePointerUp, { once: true });
   };
 
@@ -3304,6 +3321,7 @@ function ThreadPanel({
       )}
 
       <form
+        ref={composerRef}
         className={cn('relative shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[var(--accent)]', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F5F4F7]')}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
@@ -3392,12 +3410,13 @@ function ThreadPanel({
             onSelect={insertMention}
           />
         )}
-        <button
-          type="button"
+        <div
+          role="separator"
+          aria-orientation="horizontal"
           aria-label="Resize reply box"
           title="Drag to resize reply box"
           onPointerDown={startReplyBoxResize}
-          className="group -mx-4 mb-2 flex h-3 cursor-row-resize touch-none items-center outline-none"
+          className="group -mx-4 mb-2 flex h-5 cursor-row-resize touch-none items-center outline-none"
         >
           <span
             className={cn(
@@ -3407,7 +3426,7 @@ function ThreadPanel({
                 : 'bg-[#DCD7E1] group-hover:bg-[var(--accent-strong)] group-focus-visible:bg-[var(--accent-strong)]'
             )}
           />
-        </button>
+        </div>
         <textarea
           ref={textareaRef}
           value={reply}
@@ -3467,7 +3486,7 @@ function ThreadPanel({
           onBlur={() => { window.setTimeout(() => setMentionMatch(null), 120); onTyping(false); }}
           placeholder="Reply to this post"
           style={{ height: replyBoxHeight }}
-          className={cn('max-h-[40dvh] min-h-[4.5rem] w-full resize-none overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
+          className={cn('max-h-[75dvh] min-h-[4.5rem] w-full resize-none overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
         />
         {!editingComment && (files.length > 0 || externalAttachments.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -3781,9 +3800,9 @@ function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceI
 function ThreadWidthPresets({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
   const [open, setOpen] = useState(false);
   const options = [
-    { label: 'Wide', width: 80, detail: 'More room for discussion' },
+    { label: 'Wide', width: 75, detail: 'More room for discussion' },
     { label: 'Balanced', width: 50, detail: 'Equal workspace and discussion' },
-    { label: 'Compact', width: 20, detail: 'More room for the workspace' },
+    { label: 'Compact', width: 25, detail: 'More room for the workspace' },
   ];
   const active = options.reduce((closest, option) => Math.abs(option.width - width) < Math.abs(closest.width - width) ? option : closest, options[1]);
   return (
@@ -3823,8 +3842,8 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
       role="separator"
       aria-label="Resize discussion pane"
       aria-orientation="vertical"
-      aria-valuemin={20}
-      aria-valuemax={80}
+      aria-valuemin={25}
+      aria-valuemax={75}
       aria-valuenow={Math.round(width)}
       tabIndex={0}
       title="Drag to resize discussion pane"
@@ -5150,6 +5169,7 @@ function SettingsModal({
   const [moduleError, setModuleError] = useState('');
   const [emailIntegrationBusy, setEmailIntegrationBusy] = useState('');
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
+  const [notificationFeedback, setNotificationFeedback] = useState('');
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const modalTitles: Record<AccountModalView, string> = {
     personalization: 'Personalization',
@@ -5166,17 +5186,45 @@ function SettingsModal({
   const updateNotificationPreference = async (key: keyof NotificationPreferences, value: boolean) => {
     if (key === 'email' && value) return;
     if (key === 'desktop' && value) {
-      if (!('Notification' in window)) return;
+      setNotificationFeedback('');
+      if (!('Notification' in window)) {
+        setNotificationFeedback('This browser does not support desktop notifications.');
+        return;
+      }
       if (Notification.permission !== 'granted') {
         const permission = await Notification.requestPermission();
-        if (permission !== 'granted') return;
+        if (permission !== 'granted') {
+          setNotificationFeedback('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
+          return;
+        }
       }
-      showDesktopNotification('TriCord Notifications Enabled', {
+      const shown = showDesktopNotification('TriCord Notifications Enabled', {
         body: 'You will receive alerts while TriCord is open in the background.',
         tag: 'tricord-notifications-enabled',
       });
+      setNotificationFeedback(shown ? 'Test notification sent. If it does not appear, check macOS System Settings > Notifications > Chrome.' : 'Chrome could not show a desktop notification.');
     }
     onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
+  };
+
+  const sendTestNotification = async () => {
+    setNotificationFeedback('');
+    if (!('Notification' in window)) {
+      setNotificationFeedback('This browser does not support desktop notifications.');
+      return;
+    }
+    if (Notification.permission !== 'granted') {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        setNotificationFeedback('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
+        return;
+      }
+    }
+    const shown = showDesktopNotification('TriCord Test Notification', {
+      body: 'Desktop notifications are ready for new TriCord activity.',
+      tag: `tricord-test-${Date.now()}`,
+    });
+    setNotificationFeedback(shown ? 'Test notification sent. If it does not appear, check macOS System Settings > Notifications > Chrome.' : 'Chrome could not show a desktop notification.');
   };
 
   return (
@@ -5389,6 +5437,13 @@ function SettingsModal({
             <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => void updateNotificationPreference('taskAssignments', checked)} />
             <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => void updateNotificationPreference('announcements', checked)} />
             <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need the transactional email delivery workflow enabled before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-inherit pt-4">
+            <button type="button" onClick={() => void sendTestNotification()} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
+              <Bell className="h-4 w-4" />
+              Send Test Notification
+            </button>
+            {notificationFeedback && <p className={cn('text-sm leading-6', muted(theme))}>{notificationFeedback}</p>}
           </div>
         </section>}
 

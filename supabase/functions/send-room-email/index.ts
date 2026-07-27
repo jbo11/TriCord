@@ -90,7 +90,7 @@ Deno.serve(async (request) => {
     if (roomError || !room) return json({ error: 'Room not found.' }, 404);
 
     const userIdentity = await loadUserIdentity(adminClient, authData.user.id, authData.user.email || '');
-    const identity = await selectSenderIdentity(adminClient, workspaceId, authData.user.id, input.providerAccountId || '', userIdentity.email);
+    const identity = await selectSenderIdentity(adminClient, workspaceId, authData.user.id, input.providerAccountId || '', userIdentity.email, userIdentity.name);
     auditBase = { workspace_id: workspaceId, post_id: postId, user_id: authData.user.id, account_id: identity.accountId, provider: identity.provider, sender: identity.sender, reply_to: identity.replyTo, recipient: to, cc, bcc, subject };
 
     const result = await sendWithProvider(userClient, identity, { to, cc, bcc, subject: subject || `Re: ${post.title}`, text: body });
@@ -130,11 +130,11 @@ async function loadUserIdentity(adminClient: ReturnType<typeof createClient>, us
     .eq('id', userId)
     .maybeSingle();
   const email = normalizeEmail(String(data?.email || fallbackEmail || ''));
-  const name = String(data?.nickname || data?.display_name || data?.full_name || email.split('@')[0] || 'TriCord member');
+  const name = String(data?.full_name || data?.display_name || data?.nickname || email.split('@')[0] || 'TriCord member');
   return { email, name };
 }
 
-async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>, workspaceId: string, userId: string, preferredAccountId: string, userEmail: string): Promise<SenderIdentity> {
+async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>, workspaceId: string, userId: string, preferredAccountId: string, userEmail: string, userDisplayName: string): Promise<SenderIdentity> {
   const { data: accounts, error } = await adminClient
     .from('user_email_accounts')
     .select('id, provider, email_address, display_name, is_default, is_connected, last_error')
@@ -149,7 +149,7 @@ async function selectSenderIdentity(adminClient: ReturnType<typeof createClient>
     : accounts?.find((account) => account.is_default) ?? [...(accounts ?? [])].sort((a, b) => priority.indexOf(a.provider as Provider) - priority.indexOf(b.provider as Provider))[0];
 
   if (selected) {
-    return { provider: selected.provider as Provider, sender: selected.email_address, accountId: selected.id, displayName: selected.display_name, replyTo: selected.email_address };
+    return { provider: selected.provider as Provider, sender: selected.email_address, accountId: selected.id, displayName: userDisplayName || selected.display_name, replyTo: selected.email_address };
   }
 
   throw new Error(`Email delivery is not configured for ${userEmail || 'this TriCord account'}.`);
@@ -323,7 +323,14 @@ async function logIntegrationEvent(adminClient: ReturnType<typeof createClient>,
 function formatSender(identity: SenderIdentity) {
   const displayName = identity.displayName || 'TriCord';
   if (identity.sender.includes('<')) return identity.sender;
-  return `${displayName.replace(/[<>]/g, '')} <${identity.sender}>`;
+  return `${formatDisplayName(displayName)} <${identity.sender}>`;
+}
+
+function formatDisplayName(value: string) {
+  const cleaned = value.replace(/[\r\n<>]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return 'TriCord';
+  if (/[^\x20-\x7E]/.test(cleaned)) return encodeMimeHeader(cleaned);
+  return `"${cleaned.replace(/["\\]/g, '\\$&')}"`;
 }
 
 function normalizeEmail(value: string) {

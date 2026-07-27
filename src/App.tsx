@@ -3186,7 +3186,7 @@ function ThreadPanel({
     const startY = event.clientY;
     const startHeight = replyBoxHeight;
     const panelHeight = composerRef.current?.closest('aside')?.getBoundingClientRect().height ?? window.innerHeight;
-    const maxHeight = Math.max(160, Math.floor(panelHeight * 0.75));
+    const maxHeight = Math.max(160, Math.floor(panelHeight * 0.5));
     const minHeight = 72;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
@@ -3417,11 +3417,11 @@ function ThreadPanel({
           aria-label="Resize reply box"
           title="Drag to resize reply box"
           onPointerDown={startReplyBoxResize}
-          className="group -mx-4 mb-2 flex h-5 cursor-row-resize touch-none items-center outline-none"
+          className="group absolute top-0 left-0 right-0 z-20 h-4 -translate-y-2 cursor-row-resize touch-none"
         >
           <span
             className={cn(
-              'block h-px w-full transition-all group-hover:h-0.5 group-focus-visible:h-0.5',
+              'absolute inset-x-0 top-1/2 -translate-y-1/2 block h-1 w-full rounded-full transition-all duration-150',
               theme === 'dark'
                 ? 'bg-white/10 group-hover:bg-[var(--accent)] group-focus-visible:bg-[var(--accent)]'
                 : 'bg-[#DCD7E1] group-hover:bg-[var(--accent-strong)] group-focus-visible:bg-[var(--accent-strong)]'

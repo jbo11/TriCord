@@ -585,10 +585,16 @@ export default function App() {
     if (!Number.isFinite(cutoff)) return 0;
     const currentUserId = session.user.id;
     const currentUserProfile = profiles[currentUserId];
+    const isPostActivitySeen = (postId: string, timestamp: string) => {
+      const seenAt = Date.parse(seenPostActivityAt[postId] ?? '');
+      const activityAt = Date.parse(timestamp);
+      return Number.isFinite(seenAt) && Number.isFinite(activityAt) && seenAt >= activityAt;
+    };
     const newComments = comments.filter((comment) => (
       comment.author_id !== currentUserId
       && Date.parse(comment.created_at) > cutoff
       && (!isViewingActiveDiscussion || comment.post_id !== selectedPostId)
+      && !isPostActivitySeen(comment.post_id, comment.created_at)
     ));
     const mentionCommentIds = new Set(newComments.filter((comment) => includesCurrentUserMention(comment.body, currentUserProfile)).map((comment) => comment.id));
     const mentionCount = notificationPreferences.mentions ? mentionCommentIds.size : 0;
@@ -596,16 +602,16 @@ export default function App() {
       ? newComments.filter((comment) => !mentionCommentIds.has(comment.id)).length
       : 0;
     const postCount = notificationPreferences.announcements
-      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.created_at) > cutoff).length
+      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.created_at) > cutoff && !isPostActivitySeen(post.id, post.created_at)).length
       : 0;
     const activePostUpdateCount = notificationPreferences.directMessages
-      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId)).length
+      ? posts.filter((post) => post.author_id !== currentUserId && Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId) && !isPostActivitySeen(post.id, post.last_activity_at)).length
       : 0;
     const assignedTaskCount = notificationPreferences.taskAssignments
       ? tasks.filter((task) => task.assignee_id === currentUserId && Date.parse(task.created_at) > cutoff).length
       : 0;
     return Math.max(commentCount + mentionCount, activePostUpdateCount) + postCount + assignedTaskCount;
-  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks, workspaceId]);
+  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, seenPostActivityAt, selectedPostId, session?.user.id, tasks, workspaceId]);
   const unreadPostIds = useMemo(() => {
     const next = new Set(liveUnreadPostIds);
     if (!session?.user.id || !lastSeenActivityAt) return next;
@@ -630,11 +636,17 @@ export default function App() {
     const currentUserId = session.user.id;
     const currentUserProfile = profiles[currentUserId];
     const timestamps: number[] = [];
+    const isPostActivitySeen = (postId: string, timestamp: string) => {
+      const seenAt = Date.parse(seenPostActivityAt[postId] ?? '');
+      const activityAt = Date.parse(timestamp);
+      return Number.isFinite(seenAt) && Number.isFinite(activityAt) && seenAt >= activityAt;
+    };
 
     comments.forEach((comment) => {
       const createdAt = Date.parse(comment.created_at);
       if (comment.author_id === currentUserId || !Number.isFinite(createdAt) || createdAt <= cutoff) return;
       if (isViewingActiveDiscussion && comment.post_id === selectedPostId) return;
+      if (isPostActivitySeen(comment.post_id, comment.created_at)) return;
       const isMention = includesCurrentUserMention(comment.body, currentUserProfile);
       if ((isMention && notificationPreferences.mentions) || (!isMention && notificationPreferences.directMessages)) timestamps.push(createdAt);
     });
@@ -642,8 +654,8 @@ export default function App() {
     posts.forEach((post) => {
       const createdAt = Date.parse(post.created_at);
       const activityAt = Date.parse(post.last_activity_at);
-      if (post.author_id !== currentUserId && notificationPreferences.announcements && Number.isFinite(createdAt) && createdAt > cutoff) timestamps.push(createdAt);
-      if (post.author_id !== currentUserId && notificationPreferences.directMessages && Number.isFinite(activityAt) && activityAt > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId)) timestamps.push(activityAt);
+      if (post.author_id !== currentUserId && notificationPreferences.announcements && Number.isFinite(createdAt) && createdAt > cutoff && !isPostActivitySeen(post.id, post.created_at)) timestamps.push(createdAt);
+      if (post.author_id !== currentUserId && notificationPreferences.directMessages && Number.isFinite(activityAt) && activityAt > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId) && !isPostActivitySeen(post.id, post.last_activity_at)) timestamps.push(activityAt);
     });
 
     tasks.forEach((task) => {
@@ -653,7 +665,7 @@ export default function App() {
 
     const latest = Math.max(...timestamps);
     return Number.isFinite(latest) ? new Date(latest).toISOString() : '';
-  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks]);
+  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, seenPostActivityAt, selectedPostId, session?.user.id, tasks]);
 
   const markPostActivitySeen = useCallback((postId?: string | null) => {
     if (!postId) return;
@@ -3385,14 +3397,14 @@ function ThreadPanel({
           aria-label="Resize reply box"
           title="Drag to resize reply box"
           onPointerDown={startReplyBoxResize}
-          className="group mb-2 flex h-3 w-full cursor-row-resize touch-none items-center justify-center rounded-md outline-none"
+          className="group -mx-4 mb-2 flex h-3 cursor-row-resize touch-none items-center outline-none"
         >
           <span
             className={cn(
-              'h-px w-12 rounded-full transition-all group-hover:h-0.5 group-focus-visible:h-0.5',
+              'block h-px w-full transition-all group-hover:h-0.5 group-focus-visible:h-0.5',
               theme === 'dark'
-                ? 'bg-white/20 group-hover:bg-[var(--accent)] group-focus-visible:bg-[var(--accent)]'
-                : 'bg-[#B8B3C2] group-hover:bg-[var(--accent-strong)] group-focus-visible:bg-[var(--accent-strong)]'
+                ? 'bg-white/10 group-hover:bg-[var(--accent)] group-focus-visible:bg-[var(--accent)]'
+                : 'bg-[#DCD7E1] group-hover:bg-[var(--accent-strong)] group-focus-visible:bg-[var(--accent-strong)]'
             )}
           />
         </button>
@@ -6854,7 +6866,14 @@ function formatFileSize(bytes: number) {
 }
 
 function formatMessageTime(timestamp: string) {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const options: Intl.DateTimeFormatOptions = date.getTime() < startOfToday
+    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+    : { hour: 'numeric', minute: '2-digit' };
+  return new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
 function formatTaskDate(value: string) {

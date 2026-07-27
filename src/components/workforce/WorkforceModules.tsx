@@ -1251,24 +1251,68 @@ function toDateFromLocalParts(dateValue: string, timeValue: string) {
   return new Date(`${dateValue}T${timeValue || '00:00'}:00`);
 }
 
+function formatFriendlyTimeValue(value: string) {
+  if (!value) return '';
+  const parsed = parseTimeInput(value);
+  return `${String(parsed.hour12).padStart(2, '0')}:${String(parsed.minute).padStart(2, '0')} ${parsed.period}`;
+}
+
+function normalizeFriendlyTimeInput(input: string, allowBlank = false) {
+  const trimmed = input.trim();
+  if (!trimmed) return allowBlank ? '' : null;
+  const match = trimmed.match(/^(\d{1,2})(?::?(\d{2}))?\s*([ap]m?)?$/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? '0');
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+  const suffix = match[3]?.toLowerCase();
+  if (suffix) {
+    if (hour < 1 || hour > 12) return null;
+    const isPm = suffix.startsWith('p');
+    hour = isPm ? (hour === 12 ? 12 : hour + 12) : (hour === 12 ? 0 : hour);
+  } else if (hour < 0 || hour > 23) {
+    return null;
+  }
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 function FriendlyTimeField({ label, value, onChange, theme, allowBlank = false }: { label: string; value: string; onChange: (value: string) => void; theme: Theme; allowBlank?: boolean }) {
   const parsed = parseTimeInput(value);
-  const display = value ? `${String(parsed.hour12).padStart(2, '0')}:${String(parsed.minute).padStart(2, '0')} ${parsed.period}` : '';
+  const display = formatFriendlyTimeValue(value);
+  const [draft, setDraft] = useState(display);
+  useEffect(() => setDraft(display), [display]);
   const setTime = (hour12: number, minute: number, period: 'AM' | 'PM') => {
     const boundedHour = ((hour12 - 1 + 12) % 12) + 1;
     const boundedMinute = ((minute % 60) + 60) % 60;
     const hour24 = period === 'AM' ? (boundedHour === 12 ? 0 : boundedHour) : (boundedHour === 12 ? 12 : boundedHour + 12);
     onChange(`${String(hour24).padStart(2, '0')}:${String(boundedMinute).padStart(2, '0')}`);
   };
+  const commitDraft = (nextDraft = draft) => {
+    const normalized = normalizeFriendlyTimeInput(nextDraft, allowBlank);
+    if (normalized === null) {
+      setDraft(display);
+      return;
+    }
+    onChange(normalized);
+    setDraft(formatFriendlyTimeValue(normalized));
+  };
   return (
     <label className="block">
       <span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span>
       <div className={cn('rounded-xl border p-3', panel(theme))}>
         <input
-          readOnly
-          value={display}
+          type="text"
+          value={draft}
           placeholder={allowBlank ? 'Optional' : 'HH:MM AM/PM'}
           onFocus={() => { if (!value && !allowBlank) setTime(9, 0, 'AM'); }}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => commitDraft()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              commitDraft(event.currentTarget.value);
+            }
+          }}
           className={cn('mb-3 h-10 w-full rounded-lg border px-3 text-sm font-semibold outline-none', theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#E7E3EA] bg-[#F7F8FA]')}
         />
         <div className="flex items-center justify-center gap-3">

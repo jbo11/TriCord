@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -501,6 +501,9 @@ export default function App() {
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
   const previousUnreadCountRef = useRef(0);
   const lastNotifiedActivityRef = useRef('');
+  const notificationPreferencesRef = useRef(DEFAULT_NOTIFICATION_PREFERENCES);
+  const notificationUnreadCountRef = useRef(0);
+  const realtimeAlertRef = useRef<Record<string, number>>({});
   const [onlineStatuses, setOnlineStatuses] = useState<Record<string, { status: 'active' | 'idle'; at: number }>>({});
   const [typingByPost, setTypingByPost] = useState<Record<string, Record<string, number>>>({});
   const activityLastSeenRef = useRef(Date.now());
@@ -576,7 +579,11 @@ export default function App() {
     if (!Number.isFinite(cutoff)) return 0;
     const currentUserId = session.user.id;
     const currentUserProfile = profiles[currentUserId];
-    const newComments = comments.filter((comment) => comment.author_id !== currentUserId && Date.parse(comment.created_at) > cutoff);
+    const newComments = comments.filter((comment) => (
+      comment.author_id !== currentUserId
+      && Date.parse(comment.created_at) > cutoff
+      && (!isViewingActiveDiscussion || comment.post_id !== selectedPostId)
+    ));
     const mentionCommentIds = new Set(newComments.filter((comment) => includesCurrentUserMention(comment.body, currentUserProfile)).map((comment) => comment.id));
     const mentionCount = notificationPreferences.mentions ? mentionCommentIds.size : 0;
     const commentCount = notificationPreferences.directMessages
@@ -615,6 +622,7 @@ export default function App() {
     comments.forEach((comment) => {
       const createdAt = Date.parse(comment.created_at);
       if (comment.author_id === currentUserId || !Number.isFinite(createdAt) || createdAt <= cutoff) return;
+      if (isViewingActiveDiscussion && comment.post_id === selectedPostId) return;
       const isMention = includesCurrentUserMention(comment.body, currentUserProfile);
       if ((isMention && notificationPreferences.mentions) || (!isMention && notificationPreferences.directMessages)) timestamps.push(createdAt);
     });
@@ -635,13 +643,6 @@ export default function App() {
     return Number.isFinite(latest) ? new Date(latest).toISOString() : '';
   }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks]);
 
-  const markWorkspaceActivitySeen = useCallback(() => {
-    if (!unreadSeenKey || typeof window === 'undefined') return;
-    const now = new Date().toISOString();
-    window.localStorage.setItem(unreadSeenKey, now);
-    setLastSeenActivityAt(now);
-  }, [unreadSeenKey]);
-
   const markPostActivitySeen = useCallback((postId?: string | null) => {
     if (!postId) return;
     setLiveUnreadPostIds((current) => {
@@ -655,16 +656,22 @@ export default function App() {
   const markVisibleDiscussionActivitySeen = useCallback(() => {
     const currentPostId = selectedPostIdRef.current;
     markPostActivitySeen(currentPostId);
-    if (!lastSeenActivityAt || !session?.user.id) return;
-    const cutoff = Date.parse(lastSeenActivityAt);
-    if (!Number.isFinite(cutoff)) return;
-    const hasUnreadOutsideCurrentPost = posts.some((post) => (
-      post.id !== currentPostId
-      && post.author_id !== session.user.id
-      && Date.parse(post.last_activity_at) > cutoff
-    ));
-    if (!hasUnreadOutsideCurrentPost) markWorkspaceActivitySeen();
-  }, [lastSeenActivityAt, markPostActivitySeen, markWorkspaceActivitySeen, posts, session?.user.id]);
+  }, [markPostActivitySeen]);
+
+  const alertUnreadActivity = useCallback((postId = 'workspace') => {
+    const now = Date.now();
+    if (now - (realtimeAlertRef.current[postId] ?? 0) < 2500) return;
+    realtimeAlertRef.current[postId] = now;
+    const preferences = notificationPreferencesRef.current;
+    const unreadCount = Math.max(notificationUnreadCountRef.current, 1);
+    if (preferences.sound) playNotificationTone();
+    if (preferences.desktop) {
+      showDesktopNotification('TriCord Update', {
+        body: `${unreadCount} unread update${unreadCount === 1 ? '' : 's'}`,
+        tag: `tricord-unread-${postId}`,
+      });
+    }
+  }, []);
 
   const openBillingPortal = useCallback(async (targetWorkspaceId = workspaceId) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -768,6 +775,14 @@ export default function App() {
   }, [notificationPreferences, notificationPrefsKey]);
 
   useEffect(() => {
+    notificationPreferencesRef.current = notificationPreferences;
+  }, [notificationPreferences]);
+
+  useEffect(() => {
+    notificationUnreadCountRef.current = notificationUnreadCount;
+  }, [notificationUnreadCount]);
+
+  useEffect(() => {
     if (!unreadSeenKey) {
       setLastSeenActivityAt(new Date().toISOString());
       return;
@@ -816,14 +831,13 @@ export default function App() {
       return;
     }
     const hasNewActivity = Date.parse(latestNotificationActivityAt) > Date.parse(lastNotifiedActivityRef.current);
-    const isBackground = document.visibilityState === 'hidden' || !document.hasFocus();
-    if (hasNewActivity && (isBackground || !isViewingActiveDiscussion)) {
+    if (hasNewActivity) {
       if (notificationPreferences.sound) playNotificationTone();
       if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
     }
     if (hasNewActivity) lastNotifiedActivityRef.current = latestNotificationActivityAt;
     previousUnreadCountRef.current = notificationUnreadCount;
-  }, [isViewingActiveDiscussion, latestNotificationActivityAt, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
+  }, [latestNotificationActivityAt, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1309,7 +1323,18 @@ export default function App() {
       .channel(`workspace-${workspaceId}`, { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'comments_changed' }, ({ payload }) => {
         const activePostId = selectedPostIdRef.current;
-        if (activePostId && String(payload?.postId ?? '') === activePostId) void loadComments(activePostId);
+        const changedPostId = String(payload?.postId ?? '');
+        const isVisibleActivePost = changedPostId && activePostId === changedPostId && view === 'feed' && chatOpen && document.visibilityState === 'visible' && document.hasFocus();
+        if (changedPostId && !isVisibleActivePost) {
+          setLiveUnreadPostIds((current) => {
+            if (current.has(changedPostId)) return current;
+            const next = new Set(current);
+            next.add(changedPostId);
+            return next;
+          });
+          alertUnreadActivity(changedPostId);
+        }
+        if (activePostId && changedPostId === activePostId) void loadComments(activePostId);
       })
       .on('broadcast', { event: 'posts_changed' }, () => {
         void loadWorkspaceData(workspaceId, true);
@@ -1353,6 +1378,7 @@ export default function App() {
             next.add(changedPostId);
             return next;
           });
+          alertUnreadActivity(changedPostId);
         }
         if (activePostId && (!changedPostId || changedPostId === activePostId)) void loadComments(activePostId);
       })
@@ -1389,7 +1415,7 @@ export default function App() {
       if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [chatOpen, loadComments, loadWorkspaceData, session?.access_token, session?.user.id, view, workspaceId]);
+  }, [alertUnreadActivity, chatOpen, loadComments, loadWorkspaceData, session?.access_token, session?.user.id, view, workspaceId]);
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.user.id) return;
@@ -2581,7 +2607,7 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'canceled').length;
 
   return (
-    <div className="grid shrink-0 gap-2 md:gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr))]">
+    <div className="grid shrink-0 grid-cols-3 gap-2 md:gap-3">
       <MetricCard label="Open posts" value={openPosts} theme={theme} />
       <MetricCard label="Knowledge" value={knowledgeCount} theme={theme} />
       <MetricCard label="Open tasks" value={openTasks} theme={theme} />
@@ -2591,9 +2617,9 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
 
 function MetricCard({ label, value, theme }: { label: string; value: number; theme: 'light' | 'dark' }) {
   return (
-    <div className={cn('relative overflow-hidden rounded-lg border p-3 md:p-4', surface(theme))}>
-      <p className={cn('break-words text-[10px] font-semibold uppercase leading-tight tracking-[0.14em] md:text-xs md:tracking-[0.18em]', muted(theme))}>{label}</p>
-      <p className="mt-2 text-2xl font-bold md:mt-3">{value}</p>
+    <div className={cn('relative min-w-0 overflow-hidden rounded-lg border p-2 md:p-4', surface(theme))}>
+      <p className={cn('truncate text-[9px] font-semibold uppercase leading-tight tracking-[0.12em] md:text-xs md:tracking-[0.18em]', muted(theme))}>{label}</p>
+      <p className="mt-2 text-xl font-bold md:mt-3 md:text-2xl">{value}</p>
     </div>
   );
 }
@@ -2614,17 +2640,17 @@ function SortBar({
   return (
     <div
       className={cn(
-        "mt-3 md:mt-4 flex flex-wrap items-center gap-2 rounded-lg border p-1",
+        "mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-lg border p-1 md:mt-4",
         surface(theme)
       )}
     >
-      <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+      <div className="grid min-w-0 grid-cols-2 gap-1">
         {sortOptions.map((option) => (
           <button
             key={option.value}
             onClick={() => setSort(option.value)}
             className={cn(
-              "h-8 shrink-0 rounded-md px-3 text-sm font-semibold transition",
+              "h-8 min-w-0 rounded-md px-2 text-sm font-semibold transition",
               sort === option.value
                 ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm"
                 : cn(muted(theme), "hover:bg-[var(--accent-soft)]")
@@ -2640,7 +2666,7 @@ function SortBar({
         aria-label={feedPostsCollapsed ? "Expand posts" : "Collapse posts"}
         onClick={() => setFeedPostsCollapsed(v => !v)}
         className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-md border",
+          "flex h-full min-h-16 w-9 shrink-0 items-center justify-center rounded-md border",
           subtleButton(theme)
         )}
       >
@@ -2882,6 +2908,7 @@ function ThreadPanel({
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState(false);
+  const [replyBoxHeight, setReplyBoxHeight] = useState(96);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -3098,6 +3125,24 @@ function ThreadPanel({
     });
   };
 
+  const startReplyBoxResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = replyBoxHeight;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = Math.min(260, Math.max(72, startHeight + startY - moveEvent.clientY));
+      setReplyBoxHeight(nextHeight);
+    };
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  };
+
   if (!post) {
     return (
       <aside className={cn('fixed inset-y-0 right-0 z-[75] flex w-full max-w-[min(100vw,28rem)] flex-col overflow-hidden border-l p-6 shadow-2xl xl:relative xl:z-auto xl:w-auto xl:max-w-none xl:shadow-none', theme === 'dark' ? 'border-white/10 bg-[#121017]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
@@ -3299,6 +3344,18 @@ function ThreadPanel({
             onSelect={insertMention}
           />
         )}
+        <button
+          type="button"
+          aria-label="Resize reply box"
+          title="Drag to resize reply box"
+          onPointerDown={startReplyBoxResize}
+          className={cn(
+            'mb-2 flex h-4 w-full cursor-row-resize items-center justify-center rounded-md',
+            theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#E7E3EA]'
+          )}
+        >
+          <span className={cn('h-1 w-10 rounded-full', theme === 'dark' ? 'bg-white/25' : 'bg-[#C9C2D0]')} />
+        </button>
         <textarea
           ref={textareaRef}
           value={reply}
@@ -3357,7 +3414,8 @@ function ThreadPanel({
           }}
           onBlur={() => { window.setTimeout(() => setMentionMatch(null), 120); onTyping(false); }}
           placeholder="Reply to this post"
-          className={cn('min-h-24 max-h-[40dvh] w-full resize-y overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
+          style={{ height: replyBoxHeight }}
+          className={cn('max-h-[40dvh] min-h-[4.5rem] w-full resize-none overflow-y-auto rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none scroll-area', subtleButton(theme))}
         />
         {!editingComment && (files.length > 0 || externalAttachments.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">

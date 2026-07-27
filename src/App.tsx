@@ -61,6 +61,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { type RealtimeChannel, type Session } from '@supabase/supabase-js';
+import type { Theme as EmojiTheme } from 'emoji-picker-react';
 import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { canOpenView, hasWorkspaceCapability } from './lib/permissions';
@@ -499,6 +500,7 @@ export default function App() {
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
   const previousUnreadCountRef = useRef(0);
+  const lastNotifiedActivityRef = useRef('');
   const [onlineStatuses, setOnlineStatuses] = useState<Record<string, { status: 'active' | 'idle'; at: number }>>({});
   const [typingByPost, setTypingByPost] = useState<Record<string, Record<string, number>>>({});
   const activityLastSeenRef = useRef(Date.now());
@@ -602,6 +604,36 @@ export default function App() {
     return next;
   }, [isViewingActiveDiscussion, lastSeenActivityAt, liveUnreadPostIds, posts, selectedPostId, session?.user.id]);
   const notificationUnreadCount = Math.max(unreadActivityCount, unreadPostIds.size);
+  const latestNotificationActivityAt = useMemo(() => {
+    if (!session?.user.id || !lastSeenActivityAt) return '';
+    const cutoff = Date.parse(lastSeenActivityAt);
+    if (!Number.isFinite(cutoff)) return '';
+    const currentUserId = session.user.id;
+    const currentUserProfile = profiles[currentUserId];
+    const timestamps: number[] = [];
+
+    comments.forEach((comment) => {
+      const createdAt = Date.parse(comment.created_at);
+      if (comment.author_id === currentUserId || !Number.isFinite(createdAt) || createdAt <= cutoff) return;
+      const isMention = includesCurrentUserMention(comment.body, currentUserProfile);
+      if ((isMention && notificationPreferences.mentions) || (!isMention && notificationPreferences.directMessages)) timestamps.push(createdAt);
+    });
+
+    posts.forEach((post) => {
+      const createdAt = Date.parse(post.created_at);
+      const activityAt = Date.parse(post.last_activity_at);
+      if (post.author_id !== currentUserId && notificationPreferences.announcements && Number.isFinite(createdAt) && createdAt > cutoff) timestamps.push(createdAt);
+      if (post.author_id !== currentUserId && notificationPreferences.directMessages && Number.isFinite(activityAt) && activityAt > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId)) timestamps.push(activityAt);
+    });
+
+    tasks.forEach((task) => {
+      const createdAt = Date.parse(task.created_at);
+      if (task.assignee_id === currentUserId && notificationPreferences.taskAssignments && Number.isFinite(createdAt) && createdAt > cutoff) timestamps.push(createdAt);
+    });
+
+    const latest = Math.max(...timestamps);
+    return Number.isFinite(latest) ? new Date(latest).toISOString() : '';
+  }, [comments, isViewingActiveDiscussion, lastSeenActivityAt, notificationPreferences.announcements, notificationPreferences.directMessages, notificationPreferences.mentions, notificationPreferences.taskAssignments, posts, profiles, selectedPostId, session?.user.id, tasks]);
 
   const markWorkspaceActivitySeen = useCallback(() => {
     if (!unreadSeenKey || typeof window === 'undefined') return;
@@ -619,6 +651,20 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const markVisibleDiscussionActivitySeen = useCallback(() => {
+    const currentPostId = selectedPostIdRef.current;
+    markPostActivitySeen(currentPostId);
+    if (!lastSeenActivityAt || !session?.user.id) return;
+    const cutoff = Date.parse(lastSeenActivityAt);
+    if (!Number.isFinite(cutoff)) return;
+    const hasUnreadOutsideCurrentPost = posts.some((post) => (
+      post.id !== currentPostId
+      && post.author_id !== session.user.id
+      && Date.parse(post.last_activity_at) > cutoff
+    ));
+    if (!hasUnreadOutsideCurrentPost) markWorkspaceActivitySeen();
+  }, [lastSeenActivityAt, markPostActivitySeen, markWorkspaceActivitySeen, posts, session?.user.id]);
 
   const openBillingPortal = useCallback(async (targetWorkspaceId = workspaceId) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -736,8 +782,7 @@ export default function App() {
     if (!unreadSeenKey) return;
     const markVisible = () => {
       if (document.visibilityState === 'visible' && isViewingActiveDiscussion) {
-        markPostActivitySeen(selectedPostIdRef.current);
-        markWorkspaceActivitySeen();
+        markVisibleDiscussionActivitySeen();
       }
     };
     window.addEventListener('focus', markVisible);
@@ -746,13 +791,12 @@ export default function App() {
       window.removeEventListener('focus', markVisible);
       document.removeEventListener('visibilitychange', markVisible);
     };
-  }, [isViewingActiveDiscussion, markPostActivitySeen, markWorkspaceActivitySeen, unreadSeenKey]);
+  }, [isViewingActiveDiscussion, markVisibleDiscussionActivitySeen, unreadSeenKey]);
 
   useEffect(() => {
     if (!unreadSeenKey || !isViewingActiveDiscussion || document.visibilityState !== 'visible') return;
-    markPostActivitySeen(selectedPostIdRef.current);
-    markWorkspaceActivitySeen();
-  }, [comments.length, isViewingActiveDiscussion, markPostActivitySeen, markWorkspaceActivitySeen, posts.length, tasks.length, unreadSeenKey]);
+    markVisibleDiscussionActivitySeen();
+  }, [comments.length, isViewingActiveDiscussion, markVisibleDiscussionActivitySeen, posts.length, tasks.length, unreadSeenKey]);
 
   useEffect(() => {
     if (marketingHome) return;
@@ -762,14 +806,24 @@ export default function App() {
   }, [marketingHome, notificationPreferences.tabBadges, notificationUnreadCount]);
 
   useEffect(() => {
-    const hasNewActivity = notificationUnreadCount > previousUnreadCountRef.current;
+    if (!latestNotificationActivityAt) {
+      previousUnreadCountRef.current = notificationUnreadCount;
+      return;
+    }
+    if (!lastNotifiedActivityRef.current) {
+      lastNotifiedActivityRef.current = latestNotificationActivityAt;
+      previousUnreadCountRef.current = notificationUnreadCount;
+      return;
+    }
+    const hasNewActivity = Date.parse(latestNotificationActivityAt) > Date.parse(lastNotifiedActivityRef.current);
     const isBackground = document.visibilityState === 'hidden' || !document.hasFocus();
     if (hasNewActivity && (isBackground || !isViewingActiveDiscussion)) {
       if (notificationPreferences.sound) playNotificationTone();
       if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
     }
+    if (hasNewActivity) lastNotifiedActivityRef.current = latestNotificationActivityAt;
     previousUnreadCountRef.current = notificationUnreadCount;
-  }, [isViewingActiveDiscussion, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
+  }, [isViewingActiveDiscussion, latestNotificationActivityAt, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1491,7 +1545,7 @@ export default function App() {
               setNotice(getErrorMessage(caughtError));
             }
           }}
-          onDeleteSpace={(space) => openConfirmDialog({
+          onDeleteSpace={async (space) => openConfirmDialog({
             title: 'Delete room?',
             body: `Delete the room "${space.name}"? Its posts, discussions, and related activity will also be permanently deleted.`,
             confirmLabel: 'Delete room',
@@ -1622,7 +1676,7 @@ export default function App() {
                                   setNotice(getErrorMessage(caughtError));
                                 }
                               }}
-                              onDelete={() => openConfirmDialog({
+                              onDelete={async () => openConfirmDialog({
                                 title: 'Delete post?',
                                 body: 'Delete this post and its discussion? This cannot be undone.',
                                 confirmLabel: 'Delete post',
@@ -1659,7 +1713,7 @@ export default function App() {
                   canManageTaskActions={canModerateContent}
                   onCreateTask={() => setTaskModalOpen(true)}
                   onEditTask={(task) => setEditingTask(task)}
-                  onDeleteTask={(task) => openConfirmDialog({
+                  onDeleteTask={async (task) => openConfirmDialog({
                     title: 'Delete task?',
                     body: 'Delete this task? This cannot be undone.',
                     confirmLabel: 'Delete task',
@@ -1694,7 +1748,7 @@ export default function App() {
                   canManage={canManageKnowledge}
                   onCreate={() => setKnowledgeModalOpen(true)}
                   onEdit={(article) => setEditingKnowledgeArticle(article)}
-                  onDelete={(article) => openConfirmDialog({
+                  onDelete={async (article) => openConfirmDialog({
                     title: 'Delete knowledge article?',
                     body: 'Delete this knowledge article? This cannot be undone.',
                     confirmLabel: 'Delete article',
@@ -2527,7 +2581,7 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'canceled').length;
 
   return (
-    <div className="grid shrink-0 grid-cols-3 gap-2 md:gap-3">
+    <div className="grid shrink-0 gap-2 md:gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr))]">
       <MetricCard label="Open posts" value={openPosts} theme={theme} />
       <MetricCard label="Knowledge" value={knowledgeCount} theme={theme} />
       <MetricCard label="Open tasks" value={openTasks} theme={theme} />
@@ -2538,7 +2592,7 @@ function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; ta
 function MetricCard({ label, value, theme }: { label: string; value: number; theme: 'light' | 'dark' }) {
   return (
     <div className={cn('relative overflow-hidden rounded-lg border p-3 md:p-4', surface(theme))}>
-      <p className={cn('text-[10px] font-semibold uppercase tracking-[0.14em] md:text-xs md:tracking-[0.18em]', muted(theme))}>{label}</p>
+      <p className={cn('break-words text-[10px] font-semibold uppercase leading-tight tracking-[0.14em] md:text-xs md:tracking-[0.18em]', muted(theme))}>{label}</p>
       <p className="mt-2 text-2xl font-bold md:mt-3">{value}</p>
     </div>
   );
@@ -2560,17 +2614,17 @@ function SortBar({
   return (
     <div
       className={cn(
-        "mt-3 md:mt-4 flex items-center gap-2 rounded-lg border p-1",
+        "mt-3 md:mt-4 flex flex-wrap items-center gap-2 rounded-lg border p-1",
         surface(theme)
       )}
     >
-      <div className="flex flex-1 gap-1">
+      <div className="flex min-w-0 flex-1 flex-wrap gap-1">
         {sortOptions.map((option) => (
           <button
             key={option.value}
             onClick={() => setSort(option.value)}
             className={cn(
-              "h-8 rounded-md px-3 text-sm font-semibold transition",
+              "h-8 shrink-0 rounded-md px-3 text-sm font-semibold transition",
               sort === option.value
                 ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm"
                 : cn(muted(theme), "hover:bg-[var(--accent-soft)]")
@@ -2685,12 +2739,12 @@ function PostRow({
       </div>
       <h2 className="mt-3 text-lg font-bold tracking-tight">{post.title}</h2>
       <p className={cn('mt-2 line-clamp-2 text-sm leading-6', muted(theme))}>{post.body}</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="mt-4 flex flex-col items-start gap-3">
+        <div className="flex min-w-0 max-w-full items-center gap-3">
           <Avatar profile={profile} status={profileStatus} />
           <span className="truncate text-sm font-semibold">{getProfileName(profile)}</span>
         </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2">
           <label className="sr-only" htmlFor={`assignee-${post.id}`}>Assign post</label>
           <select
             id={`assignee-${post.id}`}
@@ -3597,7 +3651,7 @@ function ThreadCard({ profile, profileStatus, body, timestamp, theme, workspaceI
               <EmojiPicker
                 width="100%"
                 height={420}
-                theme={theme}
+                theme={theme as EmojiTheme}
                 lazyLoadEmojis
                 previewConfig={{ showPreview: false }}
                 onEmojiClick={(emojiData) => {

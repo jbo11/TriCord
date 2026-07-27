@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleHelp,
   Clock3,
   ClipboardList,
@@ -4826,6 +4827,102 @@ function RenameRoomModal({ theme, room, onClose, onRename }: { theme: 'light' | 
   );
 }
 
+function TaskDateTimeField({ label, value, onChange, theme }: { label: string; value: string; onChange: (value: string) => void; theme: 'light' | 'dark' }) {
+  const dateValue = value.slice(0, 10);
+  const timeValue = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) ? value.slice(11, 16) : '';
+  const setDate = (nextDate: string) => {
+    if (!nextDate) {
+      onChange('');
+      return;
+    }
+    onChange(`${nextDate}T${timeValue || '09:00'}`);
+  };
+  const setTime = (nextTime: string) => {
+    if (!nextTime) {
+      onChange(dateValue ? `${dateValue}T09:00` : '');
+      return;
+    }
+    onChange(`${dateValue || toDateKey(new Date())}T${nextTime}`);
+  };
+  return (
+    <div className="grid gap-2 text-sm font-semibold">
+      <span>{label}</span>
+      <div className={cn('rounded-xl border p-3', surface(theme))}>
+        <label className="grid gap-1 text-xs font-semibold">
+          Date
+          <input type="date" value={dateValue} onChange={(event) => setDate(event.target.value)} className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))} />
+        </label>
+        <div className="mt-3">
+          <TaskFriendlyTimeField label="Time" value={timeValue} onChange={setTime} theme={theme} />
+        </div>
+        {value && <button type="button" onClick={() => onChange('')} className={cn('mt-3 text-xs font-semibold', muted(theme))}>Clear date and time</button>}
+      </div>
+    </div>
+  );
+}
+
+function TaskFriendlyTimeField({ label, value, onChange, theme }: { label: string; value: string; onChange: (value: string) => void; theme: 'light' | 'dark' }) {
+  const parsed = parseFriendlyTaskTime(value);
+  const display = formatFriendlyTaskTime(value);
+  const [draft, setDraft] = useState(display);
+  useEffect(() => setDraft(display), [display]);
+  const setTime = (hour12: number, minute: number, period: 'AM' | 'PM') => {
+    const boundedHour = ((hour12 - 1 + 12) % 12) + 1;
+    const boundedMinute = ((minute % 60) + 60) % 60;
+    const hour24 = period === 'AM' ? (boundedHour === 12 ? 0 : boundedHour) : (boundedHour === 12 ? 12 : boundedHour + 12);
+    onChange(`${String(hour24).padStart(2, '0')}:${String(boundedMinute).padStart(2, '0')}`);
+  };
+  const commitDraft = (nextDraft = draft) => {
+    const normalized = normalizeFriendlyTaskTime(nextDraft);
+    if (normalized === null) {
+      setDraft(display);
+      return;
+    }
+    onChange(normalized);
+    setDraft(formatFriendlyTaskTime(normalized));
+  };
+  return (
+    <label className="block">
+      <span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>{label}</span>
+      <input
+        type="text"
+        value={draft}
+        placeholder="HH:MM AM/PM"
+        onFocus={() => { if (!value) setTime(9, 0, 'AM'); }}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => commitDraft()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            commitDraft(event.currentTarget.value);
+          }
+        }}
+        className={cn('mb-3 h-10 w-full rounded-lg border px-3 text-sm font-semibold outline-none', theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#E7E3EA] bg-[#F7F8FA]')}
+      />
+      <div className="flex items-center justify-center gap-3">
+        <TaskTimeStepper value={String(parsed.hour12).padStart(2, '0')} onUp={() => setTime(parsed.hour12 + 1, parsed.minute, parsed.period)} onDown={() => setTime(parsed.hour12 - 1, parsed.minute, parsed.period)} theme={theme} />
+        <span className={cn('text-lg font-bold', muted(theme))}>:</span>
+        <TaskTimeStepper value={String(parsed.minute).padStart(2, '0')} onUp={() => setTime(parsed.hour12, parsed.minute + 1, parsed.period)} onDown={() => setTime(parsed.hour12, parsed.minute - 1, parsed.period)} theme={theme} />
+        <div className="grid gap-2">
+          {(['AM', 'PM'] as const).map((period) => (
+            <button key={period} type="button" onClick={() => setTime(parsed.hour12, parsed.minute, period)} className={cn('h-9 rounded-md px-3 text-xs font-bold transition', parsed.period === period && value ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : subtleButton(theme))}>{period}</button>
+          ))}
+        </div>
+      </div>
+    </label>
+  );
+}
+
+function TaskTimeStepper({ value, onUp, onDown, theme }: { value: string; onUp: () => void; onDown: () => void; theme: 'light' | 'dark' }) {
+  return (
+    <div className="grid justify-items-center gap-2">
+      <button type="button" onClick={onUp} className={cn('inline-flex h-7 w-10 items-center justify-center rounded-md', subtleButton(theme))}><ChevronUp className="h-4 w-4 text-[var(--accent-strong)]" /></button>
+      <span className={cn('flex h-10 w-14 items-center justify-center rounded-md border text-sm font-bold', theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#E7E3EA] bg-[#F7F8FA]')}>{value}</span>
+      <button type="button" onClick={onDown} className={cn('inline-flex h-7 w-10 items-center justify-center rounded-md', subtleButton(theme))}><ChevronDown className="h-4 w-4 text-[var(--accent-strong)]" /></button>
+    </div>
+  );
+}
+
 function TaskModal({
   theme,
   profiles,
@@ -4911,13 +5008,10 @@ function TaskModal({
               ))}
             </select>
           </label>
-          <label className="grid gap-2 text-sm font-semibold">
-            Due Date And Time
-            <input type="datetime-local" value={dueAt} onChange={(event) => setDraft((current) => ({ ...current, dueAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
-          </label>
+          <TaskDateTimeField label="Due Date And Time" value={dueAt} onChange={(value) => setDraft((current) => ({ ...current, dueAt: value }))} theme={theme} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="grid gap-2 text-sm font-semibold">Reminder<input type="datetime-local" value={reminderAt} onChange={(event) => setDraft((current) => ({ ...current, reminderAt: event.target.value }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+          <TaskDateTimeField label="Reminder" value={reminderAt} onChange={(value) => setDraft((current) => ({ ...current, reminderAt: value }))} theme={theme} />
           <label className="grid gap-2 text-sm font-semibold">Recurring<select value={recurrenceRule} onChange={(event) => setDraft((current) => ({ ...current, recurrenceRule: event.target.value as typeof recurrenceRule }))} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="none">Does Not Repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
         </div>
         {recurrenceRule === 'custom' && <label className="grid gap-2 text-sm font-semibold">Custom Schedule<input value={recurrenceCustom} onChange={(event) => setDraft((current) => ({ ...current, recurrenceCustom: event.target.value }))} placeholder="Example: every weekday, every 2 weeks" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>}
@@ -7115,6 +7209,41 @@ function toDateTimeLocalInputValue(value: string) {
   if (Number.isNaN(date.getTime())) return '';
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function normalizeFriendlyTaskTime(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{1,2})(?::?(\d{2}))?\s*([ap]m?)?$/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? '0');
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+  const suffix = match[3]?.toLowerCase();
+  if (suffix) {
+    if (hour < 1 || hour > 12) return null;
+    const isPm = suffix.startsWith('p');
+    hour = isPm ? (hour === 12 ? 12 : hour + 12) : (hour === 12 ? 0 : hour);
+  } else if (hour < 0 || hour > 23) {
+    return null;
+  }
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseFriendlyTaskTime(value: string) {
+  const [hourRaw, minuteRaw] = value.split(':');
+  const hour24 = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const validHour = Number.isFinite(hour24) ? Math.min(23, Math.max(0, hour24)) : 9;
+  const validMinute = Number.isFinite(minute) ? Math.min(59, Math.max(0, minute)) : 0;
+  const period: 'AM' | 'PM' = validHour >= 12 ? 'PM' : 'AM';
+  const hour12 = validHour % 12 || 12;
+  return { hour12, minute: validMinute, period };
+}
+
+function formatFriendlyTaskTime(value: string) {
+  const parsed = parseFriendlyTaskTime(value);
+  return value ? `${String(parsed.hour12).padStart(2, '0')}:${String(parsed.minute).padStart(2, '0')} ${parsed.period}` : '';
 }
 
 function shortenUrlForDisplay(url: string) {

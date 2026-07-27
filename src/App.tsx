@@ -352,6 +352,10 @@ function getUnreadSeenKey(userId: string, workspaceId: string) {
   return `${UNREAD_SEEN_STORAGE_KEY}:${userId}:${workspaceId}`;
 }
 
+function getUnreadPostSeenKey(userId: string, workspaceId: string) {
+  return `${UNREAD_SEEN_STORAGE_KEY}:posts:${userId}:${workspaceId}`;
+}
+
 function includesCurrentUserMention(body: string, profile?: AppProfile) {
   if (!profile) return false;
   const aliases = [profile.nickname, profile.display_name, profile.full_name, profile.email]
@@ -496,6 +500,7 @@ export default function App() {
   const [selectedEmailAccountId, setSelectedEmailAccountId] = useState('');
   const [lastSeenActivityAt, setLastSeenActivityAt] = useState(new Date().toISOString());
   const [liveUnreadPostIds, setLiveUnreadPostIds] = useState<Set<string>>(() => new Set());
+  const [seenPostActivityAt, setSeenPostActivityAt] = useState<Record<string, string>>({});
   const selectedPostIdRef = useRef('');
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
@@ -572,6 +577,7 @@ export default function App() {
   );
   const notificationPrefsKey = session?.user.id ? getNotificationPreferenceKey(session.user.id) : '';
   const unreadSeenKey = session?.user.id && workspaceId ? getUnreadSeenKey(session.user.id, workspaceId) : '';
+  const unreadPostSeenKey = session?.user.id && workspaceId ? getUnreadPostSeenKey(session.user.id, workspaceId) : '';
   const isViewingActiveDiscussion = view === 'feed' && chatOpen && Boolean(selectedPostId);
   const unreadActivityCount = useMemo(() => {
     if (!session?.user.id || !workspaceId || !lastSeenActivityAt) return 0;
@@ -606,10 +612,16 @@ export default function App() {
     const cutoff = Date.parse(lastSeenActivityAt);
     if (!Number.isFinite(cutoff)) return next;
     posts
-      .filter((post) => Date.parse(post.last_activity_at) > cutoff && (!isViewingActiveDiscussion || post.id !== selectedPostId))
+      .filter((post) => {
+        const activityAt = Date.parse(post.last_activity_at);
+        if (!Number.isFinite(activityAt) || activityAt <= cutoff) return false;
+        if (isViewingActiveDiscussion && post.id === selectedPostId) return false;
+        const seenAt = Date.parse(seenPostActivityAt[post.id] ?? '');
+        return !Number.isFinite(seenAt) || activityAt > seenAt;
+      })
       .forEach((post) => next.add(post.id));
     return next;
-  }, [isViewingActiveDiscussion, lastSeenActivityAt, liveUnreadPostIds, posts, selectedPostId, session?.user.id]);
+  }, [isViewingActiveDiscussion, lastSeenActivityAt, liveUnreadPostIds, posts, seenPostActivityAt, selectedPostId, session?.user.id]);
   const notificationUnreadCount = Math.max(unreadActivityCount, unreadPostIds.size);
   const latestNotificationActivityAt = useMemo(() => {
     if (!session?.user.id || !lastSeenActivityAt) return '';
@@ -645,13 +657,25 @@ export default function App() {
 
   const markPostActivitySeen = useCallback((postId?: string | null) => {
     if (!postId) return;
+    const post = posts.find((item) => item.id === postId);
+    const seenAt = post?.last_activity_at ?? new Date().toISOString();
     setLiveUnreadPostIds((current) => {
       if (!current.has(postId)) return current;
       const next = new Set(current);
       next.delete(postId);
       return next;
     });
-  }, []);
+    setSeenPostActivityAt((current) => {
+      const currentSeenAt = Date.parse(current[postId] ?? '');
+      const nextSeenAt = Date.parse(seenAt);
+      if (Number.isFinite(currentSeenAt) && Number.isFinite(nextSeenAt) && currentSeenAt >= nextSeenAt) return current;
+      const next = { ...current, [postId]: seenAt };
+      if (unreadPostSeenKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(unreadPostSeenKey, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [posts, unreadPostSeenKey]);
 
   const markVisibleDiscussionActivitySeen = useCallback(() => {
     const currentPostId = selectedPostIdRef.current;
@@ -792,6 +816,14 @@ export default function App() {
     if (!stored) window.localStorage.setItem(unreadSeenKey, initialSeenAt);
     setLastSeenActivityAt(initialSeenAt);
   }, [unreadSeenKey]);
+
+  useEffect(() => {
+    if (!unreadPostSeenKey) {
+      setSeenPostActivityAt({});
+      return;
+    }
+    setSeenPostActivityAt(readStoredJson<Record<string, string>>(unreadPostSeenKey, {}));
+  }, [unreadPostSeenKey]);
 
   useEffect(() => {
     if (!unreadSeenKey) return;
@@ -1657,12 +1689,13 @@ export default function App() {
                 <>
                   <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length + 1} theme={theme} />
                   <SortBar
-    sort={sort}
-    setSort={setSort}
-    theme={theme}
-    feedPostsCollapsed={feedPostsCollapsed}
-    setFeedPostsCollapsed={setFeedPostsCollapsed}
-/>
+                    sort={sort}
+                    setSort={setSort}
+                    theme={theme}
+                    feedPostsCollapsed={feedPostsCollapsed}
+                    setFeedPostsCollapsed={setFeedPostsCollapsed}
+                    stacked={showThreadPanel && threadWidth >= 70}
+                  />
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area md:mt-4">
                     {currentSpacePosts.length > 0 ? (
                       <div className="grid gap-4 pb-6">
@@ -2630,12 +2663,14 @@ function SortBar({
   theme,
   feedPostsCollapsed,
   setFeedPostsCollapsed,
+  stacked = false,
 }: {
   sort: SortMode;
   setSort: (sort: SortMode) => void;
   theme: 'light' | 'dark';
   feedPostsCollapsed: boolean;
   setFeedPostsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  stacked?: boolean;
 }) {
   return (
     <div
@@ -2644,13 +2679,13 @@ function SortBar({
         surface(theme)
       )}
     >
-      <div className="grid min-w-0 grid-cols-2 gap-1">
+      <div className={cn("grid min-w-0 gap-1", stacked ? "grid-cols-2" : "grid-cols-4")}>
         {sortOptions.map((option) => (
           <button
             key={option.value}
             onClick={() => setSort(option.value)}
             className={cn(
-              "h-8 min-w-0 rounded-md px-2 text-sm font-semibold transition",
+              "h-8 min-w-0 rounded-md px-2 text-xs font-semibold transition md:text-sm",
               sort === option.value
                 ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm"
                 : cn(muted(theme), "hover:bg-[var(--accent-soft)]")
@@ -2666,7 +2701,8 @@ function SortBar({
         aria-label={feedPostsCollapsed ? "Expand posts" : "Collapse posts"}
         onClick={() => setFeedPostsCollapsed(v => !v)}
         className={cn(
-          "flex h-full min-h-16 w-9 shrink-0 items-center justify-center rounded-md border",
+          "flex w-9 shrink-0 items-center justify-center rounded-md border",
+          stacked ? "h-full min-h-16" : "h-8",
           subtleButton(theme)
         )}
       >
@@ -3349,12 +3385,16 @@ function ThreadPanel({
           aria-label="Resize reply box"
           title="Drag to resize reply box"
           onPointerDown={startReplyBoxResize}
-          className={cn(
-            'mb-2 flex h-4 w-full cursor-row-resize items-center justify-center rounded-md',
-            theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#E7E3EA]'
-          )}
+          className="group mb-2 flex h-3 w-full cursor-row-resize touch-none items-center justify-center rounded-md outline-none"
         >
-          <span className={cn('h-1 w-10 rounded-full', theme === 'dark' ? 'bg-white/25' : 'bg-[#C9C2D0]')} />
+          <span
+            className={cn(
+              'h-px w-12 rounded-full transition-all group-hover:h-0.5 group-focus-visible:h-0.5',
+              theme === 'dark'
+                ? 'bg-white/20 group-hover:bg-[var(--accent)] group-focus-visible:bg-[var(--accent)]'
+                : 'bg-[#B8B3C2] group-hover:bg-[var(--accent-strong)] group-focus-visible:bg-[var(--accent-strong)]'
+            )}
+          />
         </button>
         <textarea
           ref={textareaRef}

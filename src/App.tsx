@@ -2812,7 +2812,7 @@ function PostRow({
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill state={post.state} />
-        {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#B8B3C2]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
+        {space && <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', theme === 'dark' ? 'bg-white/10 text-[#B8B3C2]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
         {unread && <span className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-xs font-bold text-[var(--accent-ink)]">New</span>}
         <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
       </div>
@@ -6134,7 +6134,7 @@ function StatusPill({ state }: { state: AppPost['state'] }) {
     locked: 'Locked',
     archived: 'Archived',
   };
-  return <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', styles[state])}>{labels[state]}</span>;
+  return <span className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-semibold', styles[state])}>{labels[state]}</span>;
 }
 
 function getProfileName(profile?: AppProfile, fallback = 'Hub member') {

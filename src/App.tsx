@@ -2819,67 +2819,98 @@ function PostRow({
       <h2 className="mt-3 text-lg font-bold tracking-tight">{post.title}</h2>
       <p className={cn('mt-2 line-clamp-2 text-sm leading-6', muted(theme))}>{post.body}</p>
       <div className="mt-4 flex flex-col items-start gap-3">
-        <div className="flex min-w-0 max-w-full items-center gap-3">
-          <Avatar profile={profile} status={profileStatus} />
-          <span className="truncate text-sm font-semibold">{getProfileName(profile)}</span>
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-end gap-2">
-          <label className="sr-only" htmlFor={`assignee-${post.id}`}>Assign post</label>
-          <select
-            id={`assignee-${post.id}`}
-            value={typeof post.metadata?.assigned_to === 'string' ? post.metadata.assigned_to : ''}
-            disabled={post.state === 'archived'}
-            title="Assign post"
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => {
-              event.stopPropagation();
-              void onAssign(event.target.value);
-            }}
-            className={cn('h-9 max-w-40 rounded-lg border px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60', subtleButton(theme))}
-          >
-            <option value="">All</option>
-            {members.map((member) => <option key={member.id} value={member.id}>{getProfileName(member)}</option>)}
-          </select>
-          <button
-            type="button"
-            aria-label={post.state === 'archived' ? 'Restore post' : 'Archive post'}
-            title={post.state === 'archived' ? 'Restore post' : 'Archive post'}
-            onClick={(event) => {
-              event.stopPropagation();
-              void onArchive();
-            }}
-            className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
-          >
-            {post.state === 'archived' ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-          </button>
-          {canManage && (
-            <>
+        
+        <div className="flex w-full items-center justify-between gap-4">
+          {/* Left */}
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar profile={profile} status={profileStatus} />
+            <span className="truncate text-sm font-semibold">
+              {getProfileName(profile)}
+            </span>
+          </div>
+
+          {/* Right */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="sr-only" htmlFor={`assignee-${post.id}`}>
+              Assign post
+            </label>
+
+            <select
+              id={`assignee-${post.id}`}
+              value={typeof post.metadata?.assigned_to === 'string' ? post.metadata.assigned_to : ''}
+              disabled={post.state === 'archived'}
+              title="Assign post"
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => {
+                event.stopPropagation();
+                void onAssign(event.target.value);
+              }}
+              className={cn(
+                'h-9 max-w-40 rounded-lg border px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60',
+                subtleButton(theme)
+              )}
+            >
+              <option value="">All</option>
+              {members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {getProfileName(member)}
+                </option>
+              ))}
+            </select>
+
             <button
               type="button"
-              aria-label="Edit post"
-              title="Edit post"
+              aria-label={post.state === 'archived' ? 'Restore post' : 'Archive post'}
+              title={post.state === 'archived' ? 'Restore post' : 'Archive post'}
               onClick={(event) => {
                 event.stopPropagation();
-                onEdit();
+                void onArchive();
               }}
-              className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
+              className={cn(
+                'inline-flex h-9 w-9 items-center justify-center rounded-lg border',
+                subtleButton(theme)
+              )}
             >
-              <Pencil className="h-3.5 w-3.5" />
+              {post.state === 'archived' ? (
+                <ArchiveRestore className="h-3.5 w-3.5" />
+              ) : (
+                <Archive className="h-3.5 w-3.5" />
+              )}
             </button>
-            <button
-              type="button"
-              aria-label="Delete post"
-              title="Delete post"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onDelete();
-              }}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-            </>
-          )}
+
+            {canManage && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Edit post"
+                  title="Edit post"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEdit();
+                  }}
+                  className={cn(
+                    'inline-flex h-9 w-9 items-center justify-center rounded-lg border',
+                    subtleButton(theme)
+                  )}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Delete post"
+                  title="Delete post"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onDelete();
+                  }}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

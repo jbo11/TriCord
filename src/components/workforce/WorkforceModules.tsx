@@ -108,6 +108,181 @@ interface WorkforceConfirmState {
   onConfirm: () => Promise<void>;
 }
 
+interface TriCordInvoicePdfPayload {
+  invoiceNumber: string;
+  issueDate: string;
+  employeeName: string;
+  department: string;
+  periodName: string;
+  currency: string;
+  regularHours: string;
+  overtimeHours: string;
+  grossPay: string;
+  overtimePay: string;
+  deductions: string;
+  netPay: string;
+  memo: string;
+}
+
+function pdfSafeText(value: string | number | null | undefined) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function pdfColor(hex: string) {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
+}
+
+function wrapPdfText(value: string, maxChars: number) {
+  const words = String(value || '').split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
+function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload) {
+  const commands: string[] = [];
+  const text = (content: string | number, x: number, y: number, size = 11, color = '#17151D', font: 'F1' | 'F2' = 'F1') => {
+    const safe = pdfSafeText(content);
+    if (!safe) return;
+    commands.push(`BT /${font} ${size} Tf ${pdfColor(color)} rg ${x} ${y} Td (${safe}) Tj ET`);
+  };
+  const rightText = (content: string | number, rightX: number, y: number, size = 11, color = '#17151D', font: 'F1' | 'F2' = 'F1') => {
+    const safe = pdfSafeText(content);
+    text(safe, rightX - safe.length * size * 0.52, y, size, color, font);
+  };
+  const rect = (x: number, y: number, width: number, height: number, color: string, stroke?: string) => {
+    commands.push(`q ${pdfColor(color)} rg ${stroke ? `${pdfColor(stroke)} RG` : ''} ${x} ${y} ${width} ${height} re ${stroke ? 'B' : 'f'} Q`);
+  };
+  const line = (x1: number, y1: number, x2: number, y2: number, color = '#E7E3EA', width = 1) => {
+    commands.push(`q ${pdfColor(color)} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
+  };
+  const polygon = (points: Array<[number, number]>, color: string) => {
+    if (!points.length) return;
+    const [first, ...rest] = points;
+    commands.push(`q ${pdfColor(color)} rg ${first[0]} ${first[1]} m ${rest.map(([x, y]) => `${x} ${y} l`).join(' ')} h f Q`);
+  };
+
+  rect(0, 0, 612, 792, '#FFFBF7');
+  polygon([[432, 792], [612, 792], [612, 648], [548, 700], [512, 662], [476, 724]], '#17151D');
+  polygon([[498, 792], [612, 792], [612, 710], [566, 744], [538, 720]], '#3D3744');
+  polygon([[528, 724], [560, 756], [584, 732], [552, 700]], '#FF6B13');
+  polygon([[0, 0], [130, 0], [74, 45], [34, 30], [0, 74]], '#17151D');
+  polygon([[0, 0], [72, 0], [42, 28], [0, 44]], '#FF6B13');
+
+  rect(42, 703, 42, 42, '#FF6B13');
+  text('///', 53, 720, 18, '#17151D', 'F2');
+  text('TriCord', 96, 724, 18, '#17151D', 'F2');
+  text('INVOICE', 330, 717, 34, '#17151D', 'F2');
+  line(331, 708, 386, 708, '#FF6B13', 3);
+  rightText(payload.invoiceNumber, 560, 724, 12, '#3D3744', 'F2');
+  rightText(`Issued ${payload.issueDate}`, 560, 704, 10, '#6F6878');
+
+  text('INVOICE TO', 42, 650, 9, '#6F6878', 'F2');
+  text(payload.employeeName, 42, 632, 15, '#17151D', 'F2');
+  text(payload.department, 42, 614, 10, '#6F6878');
+
+  rect(302, 610, 82, 56, '#17151D');
+  rect(384, 610, 82, 56, '#2B2630');
+  rect(466, 610, 94, 56, '#17151D');
+  text('Total Due', 314, 646, 8, '#FFFFFF', 'F2');
+  text(payload.netPay, 314, 626, 15, '#FFFFFF', 'F2');
+  text('Currency', 396, 646, 8, '#FFFFFF', 'F2');
+  text(payload.currency, 396, 626, 15, '#FFFFFF', 'F2');
+  text('Invoice No.', 478, 646, 8, '#FFFFFF', 'F2');
+  text(payload.invoiceNumber.slice(0, 14), 478, 626, 10, '#FFFFFF', 'F2');
+
+  rect(42, 548, 244, 56, '#FFFFFF', '#E7E3EA');
+  rect(306, 548, 254, 56, '#FFFFFF', '#E7E3EA');
+  text('PREPARATION PERIOD', 60, 582, 9, '#6F6878', 'F2');
+  text(payload.periodName, 60, 562, 13, '#17151D', 'F2');
+  text('SUMMARY', 324, 582, 9, '#6F6878', 'F2');
+  text(`Regular ${payload.regularHours} hrs / Overtime ${payload.overtimeHours} hrs`, 324, 562, 11, '#17151D');
+
+  const tableY = 474;
+  rect(42, tableY, 518, 30, '#17151D');
+  text('SL.', 58, tableY + 10, 9, '#FFFFFF', 'F2');
+  text('ITEM DESCRIPTION', 96, tableY + 10, 9, '#FFFFFF', 'F2');
+  text('HOURS', 368, tableY + 10, 9, '#FFFFFF', 'F2');
+  rightText('TOTAL', 540, tableY + 10, 9, '#FFFFFF', 'F2');
+
+  const rows = [
+    ['1', 'Regular Hours', payload.regularHours, payload.grossPay],
+    ['2', 'Overtime Hours', payload.overtimeHours, payload.overtimePay],
+    ['3', 'Deductions', '', payload.deductions],
+  ];
+  let y = tableY - 42;
+  rows.forEach(([index, label, hours, amount]) => {
+    text(index, 60, y + 10, 10, '#17151D');
+    text(label, 96, y + 10, 11, '#17151D', 'F2');
+    text(hours, 368, y + 10, 11, '#17151D');
+    rightText(amount, 540, y + 10, 11, '#17151D');
+    line(42, y - 4, 560, y - 4);
+    y -= 46;
+  });
+
+  rect(394, y - 20, 166, 52, '#17151D');
+  text('Total', 416, y - 1, 12, '#FFFFFF', 'F2');
+  rightText(payload.netPay, 540, y - 3, 18, '#FFFFFF', 'F2');
+
+  text('PAYMENT METHOD', 42, y + 6, 9, '#6F6878', 'F2');
+  text('Review and record using your organization-approved process.', 42, y - 12, 10, '#3D3744');
+
+  if (payload.memo) {
+    text('MEMO', 42, y - 58, 9, '#6F6878', 'F2');
+    wrapPdfText(payload.memo, 78).slice(0, 4).forEach((memoLine, index) => {
+      text(memoLine, 42, y - 78 - index * 14, 10, '#3D3744');
+    });
+  }
+
+  line(398, 142, 560, 142, '#17151D');
+  text('Authorized signature', 428, 124, 9, '#6F6878');
+  text('Generated by TriCord', 42, 70, 10, '#6F6878', 'F2');
+  rightText('tricord.app', 560, 70, 10, '#6F6878');
+
+  const content = commands.join('\n');
+  const contentLength = new TextEncoder().encode(content).length;
+  const objects = [
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    '<< /Type /Pages /Kids [4 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>',
+    `<< /Length ${contentLength} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Catalog /Pages 3 0 R >>',
+  ];
+  const encoder = new TextEncoder();
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(encoder.encode(pdf).length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = encoder.encode(pdf).length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 6 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return new Blob([pdf], { type: 'application/pdf' });
+}
+
 export function WorkforceModule(props: WorkforceProps) {
   if (props.view === 'timekeeping') return <TimekeepingPage {...props} />;
   if (props.view === 'hr') return <HrPage {...props} />;
@@ -821,8 +996,6 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
       },
     });
   };
-  const invoiceEscapeMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-  const invoiceEscape = (value: string | number | null | undefined) => String(value ?? '').replace(/[&<>"']/g, (char) => invoiceEscapeMap[char] ?? char);
   const openInvoiceModal = (item: PayrollItem) => {
     const employeeLabel = employeeName(employees.find((employee) => employee.id === item.employee_profile_id), profiles);
     const employeeCode = employeeLabel.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toUpperCase().slice(0, 12) || 'EMPLOYEE';
@@ -845,86 +1018,32 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     const employeeLabel = employeeName(employee, profiles);
     const invoiceNumber = invoiceDraft.invoice_number.trim() || `TC-${Date.now()}`;
     const currency = settings?.currency_code ?? 'USD';
-    const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${invoiceEscape(invoiceNumber)} · TriCord Invoice</title>
-  <style>
-    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17151D; background: #F7F6F9; }
-    body { margin: 0; padding: 32px; }
-    main { max-width: 820px; margin: 0 auto; background: #fff; border: 1px solid #E7E3EA; border-radius: 18px; box-shadow: 0 20px 50px rgba(23, 21, 29, 0.10); overflow: hidden; }
-    header { display: flex; justify-content: space-between; gap: 24px; padding: 32px; border-bottom: 1px solid #E7E3EA; background: linear-gradient(135deg, #FFF7ED, #FFFFFF); }
-    h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; }
-    h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.18em; color: #716A78; }
-    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; }
-    .mark { display: inline-flex; height: 42px; width: 42px; align-items: center; justify-content: center; border-radius: 12px; background: #FF6B13; color: #17151D; font-weight: 900; }
-    .meta { text-align: right; font-size: 13px; color: #4F4857; line-height: 1.7; }
-    section { padding: 28px 32px; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-    .box { border: 1px solid #E7E3EA; border-radius: 14px; padding: 18px; background: #FCFBFD; }
-    table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 14px; }
-    th { text-align: left; color: #716A78; font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; border-bottom: 1px solid #E7E3EA; padding: 12px; }
-    td { border-bottom: 1px solid #E7E3EA; padding: 14px 12px; }
-    .total { font-size: 24px; font-weight: 900; color: #C93A0A; }
-    .notice { margin-top: 22px; border-left: 4px solid #FF6B13; background: #FFF7ED; padding: 14px 16px; color: #5B2A12; font-size: 13px; line-height: 1.6; }
-    @media print { body { background: #fff; padding: 0; } main { border: 0; box-shadow: none; } }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <div class="brand"><span class="mark">///</span><span>TriCord</span></div>
-        <h1>Invoice</h1>
-      </div>
-      <div class="meta">
-        <strong>${invoiceEscape(invoiceNumber)}</strong><br />
-        Issued ${invoiceEscape(formatDate(invoiceDraft.issue_date))}
-      </div>
-    </header>
-    <section class="grid">
-      <div class="box">
-        <h2>Prepared For</h2>
-        <strong>${invoiceEscape(employeeLabel)}</strong><br />
-        ${invoiceEscape(employee?.department || 'No Department Listed')}
-      </div>
-      <div class="box">
-        <h2>Preparation Period</h2>
-        <strong>${invoiceEscape(period.name)}</strong><br />
-        Currency: ${invoiceEscape(currency)}
-      </div>
-    </section>
-    <section>
-      <h2>Invoice Summary</h2>
-      <table>
-        <thead><tr><th>Description</th><th>Hours</th><th>Amount</th></tr></thead>
-        <tbody>
-          <tr><td>Regular Hours</td><td>${invoiceEscape(Number(invoiceModal.regular_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay - invoiceModal.deductions))}</td></tr>
-          <tr><td>Overtime Hours</td><td>${invoiceEscape(Number(invoiceModal.overtime_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(0))}</td></tr>
-          <tr><td>Gross Amount</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay))}</td></tr>
-          <tr><td>Deductions</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.deductions))}</td></tr>
-          <tr><td><strong>Net Amount</strong></td><td></td><td class="total">${invoiceEscape(formatter.format(invoiceModal.net_pay))}</td></tr>
-        </tbody>
-      </table>
-      ${invoiceDraft.memo.trim() ? `<div class="notice"><strong>Memo:</strong> ${invoiceEscape(invoiceDraft.memo.trim())}</div>` : ''}
-    </section>
-  </main>
-</body>
-</html>`;
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const blob = buildTriCordInvoicePdf({
+      invoiceNumber,
+      issueDate: formatDate(invoiceDraft.issue_date),
+      employeeName: employeeLabel,
+      department: employee?.department || 'No Department Listed',
+      periodName: period.name,
+      currency,
+      regularHours: Number(invoiceModal.regular_hours).toFixed(2),
+      overtimeHours: Number(invoiceModal.overtime_hours).toFixed(2),
+      grossPay: formatter.format(invoiceModal.gross_pay),
+      overtimePay: formatter.format(0),
+      deductions: formatter.format(invoiceModal.deductions),
+      netPay: formatter.format(invoiceModal.net_pay),
+      memo: invoiceDraft.memo.trim(),
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${invoiceNumber.replace(/[^a-z0-9-]+/gi, '-')}.html`;
+    link.download = `${invoiceNumber.replace(/[^a-z0-9-]+/gi, '-')}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setInvoiceModal(null);
     setInvoiceAcknowledged(false);
-    onNotice('Invoice downloaded.');
+    onNotice('Invoice PDF downloaded.');
   };
   return <>
   <ModuleFrame icon={Banknote} title="Payroll Preparation" subtitle={canManage ? 'Owner-reviewed draft summaries and compensation records' : 'Your draft compensation summaries'} theme={theme}>

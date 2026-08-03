@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { cn } from '../../lib/utils';
 import type { AppMembership, AppProfile, ViewMode, WorkspaceCapabilities, WorkspaceRole } from '../../types';
+import triCordLogo from '../../assets/tricord-logo.png';
 
 type Theme = 'light' | 'dark';
 type WorkforceView = Extract<ViewMode, 'timekeeping' | 'hr' | 'payroll' | 'reports'>;
@@ -112,16 +113,29 @@ interface TriCordInvoicePdfPayload {
   invoiceNumber: string;
   issueDate: string;
   employeeName: string;
-  department: string;
+  employeeAddress: string;
+  employeeId: string;
+  payrollStatus: string;
+  reportingPeriod: string;
+  payDate: string;
   periodName: string;
-  currency: string;
+  currentRate: string;
+  totalHours: string;
   regularHours: string;
   overtimeHours: string;
   grossPay: string;
-  overtimePay: string;
   deductions: string;
   netPay: string;
+  ytdGross: string;
+  ytdDeductions: string;
+  ytdNet: string;
   memo: string;
+}
+
+interface PdfRasterImage {
+  width: number;
+  height: number;
+  hexRgb: string;
 }
 
 function pdfSafeText(value: string | number | null | undefined) {
@@ -161,7 +175,45 @@ function wrapPdfText(value: string, maxChars: number) {
   return lines.length ? lines : [''];
 }
 
-function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload) {
+function loadImageElement(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Logo image could not be loaded.'));
+    image.src = source;
+  });
+}
+
+async function createPdfLogoImage(source: string, accent = '#F97316'): Promise<PdfRasterImage | null> {
+  if (typeof document === 'undefined') return null;
+  try {
+    const image = await loadImageElement(source);
+    const canvas = document.createElement('canvas');
+    canvas.width = 240;
+    canvas.height = 240;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.fillStyle = accent;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const inset = 42;
+    const scale = Math.min((canvas.width - inset * 2) / image.naturalWidth, (canvas.height - inset * 2) / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hexRgb = '';
+    for (let index = 0; index < data.length; index += 4) {
+      hexRgb += data[index].toString(16).padStart(2, '0');
+      hexRgb += data[index + 1].toString(16).padStart(2, '0');
+      hexRgb += data[index + 2].toString(16).padStart(2, '0');
+    }
+    return { width: canvas.width, height: canvas.height, hexRgb };
+  } catch {
+    return null;
+  }
+}
+
+function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload, logoImage: PdfRasterImage | null) {
   const commands: string[] = [];
   const text = (content: string | number, x: number, y: number, size = 11, color = '#17151D', font: 'F1' | 'F2' = 'F1') => {
     const safe = pdfSafeText(content);
@@ -178,99 +230,117 @@ function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload) {
   const line = (x1: number, y1: number, x2: number, y2: number, color = '#E7E3EA', width = 1) => {
     commands.push(`q ${pdfColor(color)} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
   };
-  const polygon = (points: Array<[number, number]>, color: string) => {
-    if (!points.length) return;
-    const [first, ...rest] = points;
-    commands.push(`q ${pdfColor(color)} rg ${first[0]} ${first[1]} m ${rest.map(([x, y]) => `${x} ${y} l`).join(' ')} h f Q`);
+  const centerText = (content: string | number, centerX: number, y: number, size = 11, color = '#17151D', font: 'F1' | 'F2' = 'F1') => {
+    const safe = pdfSafeText(content);
+    text(safe, centerX - safe.length * size * 0.26, y, size, color, font);
+  };
+  const image = (name: string, x: number, y: number, width: number, height: number) => {
+    commands.push(`q ${width} 0 0 ${height} ${x} ${y} cm /${name} Do Q`);
   };
 
-  rect(0, 0, 612, 792, '#FFFBF7');
-  polygon([[432, 792], [612, 792], [612, 648], [548, 700], [512, 662], [476, 724]], '#17151D');
-  polygon([[498, 792], [612, 792], [612, 710], [566, 744], [538, 720]], '#3D3744');
-  polygon([[528, 724], [560, 756], [584, 732], [552, 700]], '#FF6B13');
-  polygon([[0, 0], [130, 0], [74, 45], [34, 30], [0, 74]], '#17151D');
-  polygon([[0, 0], [72, 0], [42, 28], [0, 44]], '#FF6B13');
+  rect(0, 0, 612, 792, '#FFFFFF');
+  rect(12, 10, 588, 772, '#FFFFFF', '#D8D1C8');
+  rect(24, 720, 238, 38, '#FFFFFF', '#D8D1C8');
+  if (logoImage) image('Logo', 31, 728, 24, 24);
+  else rect(31, 728, 24, 24, '#F97316');
+  text('TriCord', 63, 742, 13, '#17151D', 'F2');
+  text('Workforce Records', 63, 728, 9, '#3D3744');
+  rightText('Earnings Statement', 575, 739, 18, '#17151D', 'F2');
+  rightText(payload.invoiceNumber, 575, 721, 9, '#6F6878');
 
-  rect(42, 703, 42, 42, '#FF6B13');
-  text('///', 53, 720, 18, '#17151D', 'F2');
-  text('TriCord', 96, 724, 18, '#17151D', 'F2');
-  text('INVOICE', 330, 717, 34, '#17151D', 'F2');
-  line(331, 708, 386, 708, '#FF6B13', 3);
-  rightText(payload.invoiceNumber, 560, 724, 12, '#3D3744', 'F2');
-  rightText(`Issued ${payload.issueDate}`, 560, 704, 10, '#6F6878');
+  const sectionHeader = (label: string, y: number) => {
+    rect(12, y, 588, 33, '#F97316');
+    centerText(label, 306, y + 11, 11, '#431407', 'F2');
+  };
+  const panelHeader = (label: string, x: number, y: number, width: number) => {
+    rect(x, y, width, 28, '#FFEDD5');
+    centerText(label, x + width / 2, y + 10, 11, '#431407', 'F2');
+  };
 
-  text('INVOICE TO', 42, 650, 9, '#6F6878', 'F2');
-  text(payload.employeeName, 42, 632, 15, '#17151D', 'F2');
-  text(payload.department, 42, 614, 10, '#6F6878');
+  sectionHeader('EMPLOYEE DETAILS', 682);
+  text(`Name: ${payload.employeeName}`, 28, 655, 11);
+  text(`Address: ${payload.employeeAddress}`, 28, 634, 11);
+  text(`Payroll Status: ${payload.payrollStatus}`, 28, 613, 11);
+  text(`Reporting Period: ${payload.reportingPeriod}`, 28, 592, 11);
+  text(`Employee ID: ${payload.employeeId}`, 358, 655, 11);
+  text(`Statement ID: ${payload.invoiceNumber}`, 358, 634, 11);
+  text(`Issue Date: ${payload.issueDate}`, 358, 613, 11);
+  text(`Pay Date: ${payload.payDate}`, 358, 592, 11);
 
-  rect(302, 610, 82, 56, '#17151D');
-  rect(384, 610, 82, 56, '#2B2630');
-  rect(466, 610, 94, 56, '#17151D');
-  text('Total Due', 314, 646, 8, '#FFFFFF', 'F2');
-  text(payload.netPay, 314, 626, 15, '#FFFFFF', 'F2');
-  text('Currency', 396, 646, 8, '#FFFFFF', 'F2');
-  text(payload.currency, 396, 626, 15, '#FFFFFF', 'F2');
-  text('Invoice No.', 478, 646, 8, '#FFFFFF', 'F2');
-  text(payload.invoiceNumber.slice(0, 14), 478, 626, 10, '#FFFFFF', 'F2');
+  sectionHeader('EARNINGS', 550);
+  rect(24, 380, 272, 150, '#FFFFFF', '#D8D1C8');
+  rect(318, 380, 270, 150, '#FFFFFF', '#D8D1C8');
+  panelHeader('PAYMENT', 24, 502, 272);
+  panelHeader('DEDUCTIONS', 318, 502, 270);
 
-  rect(42, 548, 244, 56, '#FFFFFF', '#E7E3EA');
-  rect(306, 548, 254, 56, '#FFFFFF', '#E7E3EA');
-  text('PREPARATION PERIOD', 60, 582, 9, '#6F6878', 'F2');
-  text(payload.periodName, 60, 562, 13, '#17151D', 'F2');
-  text('SUMMARY', 324, 582, 9, '#6F6878', 'F2');
-  text(`Regular ${payload.regularHours} hrs / Overtime ${payload.overtimeHours} hrs`, 324, 562, 11, '#17151D');
+  text('RATE', 90, 484, 10);
+  text('HOURS', 133, 484, 10);
+  text('CURRENT', 180, 484, 10);
+  text('YTD', 258, 484, 10);
+  text('Regular', 28, 463, 10);
+  text(payload.currentRate, 90, 463, 10);
+  text(payload.totalHours, 133, 463, 10);
+  rightText(payload.grossPay, 244, 463, 10);
+  rightText(payload.ytdGross, 292, 463, 10);
+  if (Number(payload.overtimeHours) > 0) {
+    text('Overtime hrs', 28, 442, 10);
+    text(payload.overtimeHours, 133, 442, 10);
+  }
 
-  const tableY = 474;
-  rect(42, tableY, 518, 30, '#17151D');
-  text('SL.', 58, tableY + 10, 9, '#FFFFFF', 'F2');
-  text('ITEM DESCRIPTION', 96, tableY + 10, 9, '#FFFFFF', 'F2');
-  text('HOURS', 368, tableY + 10, 9, '#FFFFFF', 'F2');
-  rightText('TOTAL', 540, tableY + 10, 9, '#FFFFFF', 'F2');
+  text('CURRENT', 430, 484, 10);
+  text('YEAR TO DATE', 500, 484, 10);
+  text('Payroll deductions', 322, 463, 10);
+  rightText(payload.deductions, 484, 463, 10);
+  rightText(payload.ytdDeductions, 584, 463, 10);
 
-  const rows = [
-    ['1', 'Regular Hours', payload.regularHours, payload.grossPay],
-    ['2', 'Overtime Hours', payload.overtimeHours, payload.overtimePay],
-    ['3', 'Deductions', '', payload.deductions],
-  ];
-  let y = tableY - 42;
-  rows.forEach(([index, label, hours, amount]) => {
-    text(index, 60, y + 10, 10, '#17151D');
-    text(label, 96, y + 10, 11, '#17151D', 'F2');
-    text(hours, 368, y + 10, 11, '#17151D');
-    rightText(amount, 540, y + 10, 11, '#17151D');
-    line(42, y - 4, 560, y - 4);
-    y -= 46;
-  });
+  rect(24, 330, 272, 23, '#FFFFFF', '#D8D1C8');
+  text('GROSS EARNINGS', 28, 337, 11, '#17151D', 'F2');
+  rightText(payload.grossPay, 292, 337, 11);
+  rect(318, 330, 270, 23, '#FFFFFF', '#D8D1C8');
+  text('TOTAL DEDUCTIONS', 322, 337, 11, '#17151D', 'F2');
+  rightText(payload.deductions, 584, 337, 11);
 
-  rect(394, y - 20, 166, 52, '#17151D');
-  text('Total', 416, y - 1, 12, '#FFFFFF', 'F2');
-  rightText(payload.netPay, 540, y - 3, 18, '#FFFFFF', 'F2');
+  sectionHeader('TOTAL', 278);
+  rect(364, 150, 224, 82, '#FFFFFF', '#D8D1C8');
+  panelHeader('YEAR TO DATE TOTAL', 364, 204, 224);
+  text('YEAR TO DATE GROSS', 368, 188, 10);
+  rightText(payload.ytdGross, 584, 188, 10);
+  text('YEAR TO DATE DEDUCTION', 368, 170, 10);
+  rightText(payload.ytdDeductions, 584, 170, 10);
+  text('YEAR TO DATE NET', 368, 152, 10);
+  rightText(payload.ytdNet, 584, 152, 10);
 
-  text('PAYMENT METHOD', 42, y + 6, 9, '#6F6878', 'F2');
-  text('Review and record using your organization-approved process.', 42, y - 12, 10, '#3D3744');
+  rect(364, 72, 224, 55, '#FFFFFF', '#D8D1C8');
+  panelHeader('NET TOTAL', 364, 100, 224);
+  rightText(payload.netPay, 584, 80, 12);
 
   if (payload.memo) {
-    text('MEMO', 42, y - 58, 9, '#6F6878', 'F2');
+    text('MEMO', 28, 229, 9, '#6F6878', 'F2');
     wrapPdfText(payload.memo, 78).slice(0, 4).forEach((memoLine, index) => {
-      text(memoLine, 42, y - 78 - index * 14, 10, '#3D3744');
+      text(memoLine, 28, 211 - index * 14, 10, '#3D3744');
     });
   }
 
-  line(398, 142, 560, 142, '#17151D');
-  text('Authorized signature', 428, 124, 9, '#6F6878');
-  text('Generated by TriCord', 42, 70, 10, '#6F6878', 'F2');
-  rightText('tricord.app', 560, 70, 10, '#6F6878');
+  text(payload.periodName, 28, 80, 9, '#6F6878');
+  text('Generated by TriCord', 28, 62, 9, '#6F6878', 'F2');
 
   const content = commands.join('\n');
   const contentLength = new TextEncoder().encode(content).length;
+  const logoObjectNumber = logoImage ? 6 : null;
+  const catalogObjectNumber = logoImage ? 7 : 6;
+  const pageResources = `/Font << /F1 1 0 R /F2 2 0 R >>${logoObjectNumber ? ` /XObject << /Logo ${logoObjectNumber} 0 R >>` : ''}`;
   const objects = [
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
     '<< /Type /Pages /Kids [4 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>',
+    `<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << ${pageResources} >> /Contents 5 0 R >>`,
     `<< /Length ${contentLength} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Catalog /Pages 3 0 R >>',
   ];
+  if (logoImage) {
+    const logoStream = `${logoImage.hexRgb}>`;
+    objects.push(`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${logoStream.length} >>\nstream\n${logoStream}\nendstream`);
+  }
+  objects.push('<< /Type /Catalog /Pages 3 0 R >>');
   const encoder = new TextEncoder();
   let pdf = '%PDF-1.4\n';
   const offsets: number[] = [];
@@ -279,7 +349,7 @@ function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload) {
     pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
   });
   const xrefOffset = encoder.encode(pdf).length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 6 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root ${catalogObjectNumber} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
   return new Blob([pdf], { type: 'application/pdf' });
 }
 
@@ -1008,7 +1078,7 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     setInvoiceLegalOpen(false);
     setInvoiceModal(item);
   };
-  const createInvoiceFile = () => {
+  const createInvoiceFile = async () => {
     if (!invoiceModal || !period) return;
     if (!invoiceAcknowledged) {
       onNotice('Confirm the invoice legal notice before downloading.');
@@ -1017,22 +1087,46 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     const employee = employees.find((item) => item.id === invoiceModal.employee_profile_id);
     const employeeLabel = employeeName(employee, profiles);
     const invoiceNumber = invoiceDraft.invoice_number.trim() || `TC-${Date.now()}`;
-    const currency = settings?.currency_code ?? 'USD';
+    const currentPayDate = period.pay_date || period.period_end || today();
+    const currentYear = currentPayDate.slice(0, 4);
+    const periodById = new Map(periods.map((item) => [item.id, item]));
+    const ytdItems = items.filter((item) => {
+      if (item.employee_profile_id !== invoiceModal.employee_profile_id) return false;
+      const itemPeriod = periodById.get(item.payroll_period_id);
+      if (!itemPeriod) return item.id === invoiceModal.id;
+      const itemPayDate = itemPeriod.pay_date || itemPeriod.period_end;
+      return itemPayDate.slice(0, 4) === currentYear && itemPayDate <= currentPayDate;
+    });
+    const ytdGross = ytdItems.reduce((sum, item) => sum + Number(item.gross_pay || 0), 0);
+    const ytdDeductions = ytdItems.reduce((sum, item) => sum + Number(item.deductions || 0), 0);
+    const ytdNet = ytdItems.reduce((sum, item) => sum + Number(item.net_pay || 0), 0);
+    const regularHours = Number(invoiceModal.regular_hours || 0);
+    const overtimeHours = Number(invoiceModal.overtime_hours || 0);
+    const totalHours = regularHours + overtimeHours;
+    const currentRate = totalHours > 0 ? formatter.format(Number(invoiceModal.gross_pay || 0) / totalHours) : 'N/A';
+    const logoImage = await createPdfLogoImage(triCordLogo);
     const blob = buildTriCordInvoicePdf({
       invoiceNumber,
       issueDate: formatDate(invoiceDraft.issue_date),
       employeeName: employeeLabel,
-      department: employee?.department || 'No Department Listed',
+      employeeAddress: employee?.address || 'No address listed',
+      employeeId: employee?.employee_number || 'Not assigned',
+      payrollStatus: employee?.exemption_status ? employee.exemption_status.replace('_', '-') : 'Not recorded',
+      reportingPeriod: `${formatDate(period.period_start)} - ${formatDate(period.period_end)}`,
+      payDate: formatDate(currentPayDate),
       periodName: period.name,
-      currency,
-      regularHours: Number(invoiceModal.regular_hours).toFixed(2),
-      overtimeHours: Number(invoiceModal.overtime_hours).toFixed(2),
+      currentRate,
+      totalHours: totalHours.toFixed(2),
+      regularHours: regularHours.toFixed(2),
+      overtimeHours: overtimeHours.toFixed(2),
       grossPay: formatter.format(invoiceModal.gross_pay),
-      overtimePay: formatter.format(0),
       deductions: formatter.format(invoiceModal.deductions),
       netPay: formatter.format(invoiceModal.net_pay),
+      ytdGross: formatter.format(ytdGross),
+      ytdDeductions: formatter.format(ytdDeductions),
+      ytdNet: formatter.format(ytdNet),
       memo: invoiceDraft.memo.trim(),
-    });
+    }, logoImage);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1057,7 +1151,7 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
   </ModuleFrame>
   {periodModalOpen && <WorkforceModal title={editingPeriodId ? 'Edit Preparation Period' : 'New Draft Period'} theme={theme} onClose={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} footer={<><button type="button" onClick={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePeriod()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">{editingPeriodId ? 'Save Period' : 'Create Period'}</button></>}><div className="grid gap-4 sm:grid-cols-3"><Field label="Period Start" type="date" value={periodDraft.period_start} onChange={(value) => setPeriodDraft({ ...periodDraft, period_start: value })} theme={theme} /><Field label="Period End" type="date" value={periodDraft.period_end} onChange={(value) => setPeriodDraft({ ...periodDraft, period_end: value, pay_date: periodDraft.pay_date || value })} theme={theme} /><Field label="Pay Date" type="date" value={periodDraft.pay_date} onChange={(value) => setPeriodDraft({ ...periodDraft, pay_date: value })} theme={theme} /></div></WorkforceModal>}
   {itemModal && <WorkforceModal title="Edit Payroll Draft Line" theme={theme} onClose={() => setItemModal(null)} footer={<><button type="button" onClick={() => setItemModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePayrollItem()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Line</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Regular Hours" type="number" value={itemDraft.regular_hours} onChange={(value) => setItemDraft({ ...itemDraft, regular_hours: value })} theme={theme} /><Field label="Overtime Hours" type="number" value={itemDraft.overtime_hours} onChange={(value) => setItemDraft({ ...itemDraft, overtime_hours: value })} theme={theme} /><Field label="Gross Pay" type="number" value={itemDraft.gross_pay} onChange={(value) => setItemDraft({ ...itemDraft, gross_pay: value })} theme={theme} /><Field label="Deductions" type="number" value={itemDraft.deductions} onChange={(value) => setItemDraft({ ...itemDraft, deductions: value })} theme={theme} /><Field label="Net Pay" type="number" value={itemDraft.net_pay} onChange={(value) => setItemDraft({ ...itemDraft, net_pay: value })} theme={theme} /></div></WorkforceModal>}
-  {invoiceModal && period && <WorkforceModal title="Create Invoice Draft" theme={theme} onClose={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} footer={<><button type="button" onClick={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => createInvoiceFile()} disabled={!invoiceAcknowledged} className={cn('h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]', !invoiceAcknowledged && 'cursor-not-allowed opacity-50')}>Download Invoice</button></>}><div className="space-y-4"><div className={cn('rounded-xl border p-4', panel(theme))}><p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Prepared For</p><h3 className="mt-1 text-lg font-bold">{employeeName(employees.find((employee) => employee.id === invoiceModal.employee_profile_id), profiles)}</h3><p className={cn('mt-1 text-sm', muted(theme))}>{period.name} · Net Amount {formatter.format(invoiceModal.net_pay)}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Invoice Number" value={invoiceDraft.invoice_number} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, invoice_number: value })} theme={theme} /><Field label="Issue Date" type="date" value={invoiceDraft.issue_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, issue_date: value })} theme={theme} /><Field label="Memo" value={invoiceDraft.memo} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, memo: value })} theme={theme} wide /></div><label className={cn('flex items-start gap-3 rounded-xl border p-3 text-sm leading-5', panel(theme))}><input type="checkbox" required checked={invoiceAcknowledged} onChange={(event) => setInvoiceAcknowledged(event.target.checked)} className="mt-1 h-4 w-4 accent-[var(--accent)]" /><span>I understand and agree that this invoice is a draft intended for recordkeeping and review purposes only. <button type="button" onClick={(event) => { event.preventDefault(); setInvoiceLegalOpen(true); }} className="font-semibold text-[var(--accent-strong)] underline underline-offset-2">Legal Notice / Terms</button></span></label></div></WorkforceModal>}
+  {invoiceModal && period && <WorkforceModal title="Create Invoice Draft" theme={theme} onClose={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} footer={<><button type="button" onClick={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void createInvoiceFile()} disabled={!invoiceAcknowledged} className={cn('h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]', !invoiceAcknowledged && 'cursor-not-allowed opacity-50')}>Download Invoice</button></>}><div className="space-y-4"><div className={cn('rounded-xl border p-4', panel(theme))}><p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Prepared For</p><h3 className="mt-1 text-lg font-bold">{employeeName(employees.find((employee) => employee.id === invoiceModal.employee_profile_id), profiles)}</h3><p className={cn('mt-1 text-sm', muted(theme))}>{period.name} · Net Amount {formatter.format(invoiceModal.net_pay)}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Invoice Number" value={invoiceDraft.invoice_number} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, invoice_number: value })} theme={theme} /><Field label="Issue Date" type="date" value={invoiceDraft.issue_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, issue_date: value })} theme={theme} /><Field label="Memo" value={invoiceDraft.memo} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, memo: value })} theme={theme} wide /></div><label className={cn('flex items-start gap-3 rounded-xl border p-3 text-sm leading-5', panel(theme))}><input type="checkbox" required checked={invoiceAcknowledged} onChange={(event) => setInvoiceAcknowledged(event.target.checked)} className="mt-1 h-4 w-4 accent-[var(--accent)]" /><span>I understand and agree that this invoice is a draft intended for recordkeeping and review purposes only. <button type="button" onClick={(event) => { event.preventDefault(); setInvoiceLegalOpen(true); }} className="font-semibold text-[var(--accent-strong)] underline underline-offset-2">Legal Notice / Terms</button></span></label></div></WorkforceModal>}
   {invoiceLegalOpen && <WorkforceModal title="Invoice Legal Notice" theme={theme} onClose={() => setInvoiceLegalOpen(false)} footer={<button type="button" onClick={() => setInvoiceLegalOpen(false)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Close</button>}><div className={cn('space-y-3 text-sm leading-6', muted(theme))}><p>TriCord generates invoice drafts only. Invoice drafts are provided for recordkeeping and internal review and are not a substitute for professional financial, tax, payroll, legal, or compliance advice.</p><ul className="list-disc space-y-2 pl-5"><li>TriCord does not verify the accuracy of compensation amounts, taxes, deductions, payment information, bank or wallet details, or any other financial information.</li><li>TriCord does not determine whether an invoice, payroll record, payment, tax treatment, employment classification, or financial workflow complies with applicable laws or contracts.</li><li>You are fully responsible for reviewing and confirming all invoice information before sending the invoice, recording it, or making any payment.</li></ul></div></WorkforceModal>}
   {ruleModalOpen && <WorkforceModal title="Add Preparation Item" theme={theme} onClose={() => setRuleModalOpen(false)} footer={<><button type="button" onClick={() => setRuleModalOpen(false)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveRule()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Item</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Item Name" value={ruleDraft.name} onChange={(value) => setRuleDraft({ ...ruleDraft, name: value })} theme={theme} /><SelectField label="Type" value={ruleDraft.rule_kind} options={['earning', 'deduction']} onChange={(value) => setRuleDraft({ ...ruleDraft, rule_kind: value as 'earning' | 'deduction' })} theme={theme} /><SelectField label="Calculation" value={ruleDraft.calculation_type} options={['percentage', 'fixed']} onChange={(value) => setRuleDraft({ ...ruleDraft, calculation_type: value as 'percentage' | 'fixed' })} theme={theme} /><Field label={ruleDraft.calculation_type === 'percentage' ? 'Percentage' : 'Fixed amount'} type="number" value={ruleDraft.value} onChange={(value) => setRuleDraft({ ...ruleDraft, value })} theme={theme} /></div></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}

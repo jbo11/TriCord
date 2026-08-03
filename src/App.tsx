@@ -5404,7 +5404,7 @@ function SettingsModal({
         requireInteraction: true,
       });
       if (result.ok) {
-        setNotificationFeedback(`Test notification sent through ${result.mode === 'service-worker' ? 'the browser notification service' : 'Chrome'}. If it does not appear, check macOS System Settings > Notifications > Chrome and Focus or Do Not Disturb.`);
+        setNotificationFeedback(`Test notification sent through ${result.mode === 'service-worker' ? 'the browser notification service' : 'Chrome'}. If it does not appear, check your System Settings > Notifications > Chrome and Focus or Do Not Disturb.`);
       } else {
         const reason = 'reason' in result ? result.reason : 'Unknown notification error.';
         setNotificationFeedback(`TriCord could not show a desktop notification: ${reason}`);

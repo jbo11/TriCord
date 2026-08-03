@@ -714,7 +714,9 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
   const [itemModal, setItemModal] = useState<PayrollItem | null>(null);
   const [itemDraft, setItemDraft] = useState({ regular_hours: '0', overtime_hours: '0', gross_pay: '0', deductions: '0', net_pay: '0' });
   const [invoiceModal, setInvoiceModal] = useState<PayrollItem | null>(null);
-  const [invoiceDraft, setInvoiceDraft] = useState({ invoice_number: '', issue_date: today(), due_date: today(), memo: '' });
+  const [invoiceDraft, setInvoiceDraft] = useState({ invoice_number: '', issue_date: today(), memo: '' });
+  const [invoiceAcknowledged, setInvoiceAcknowledged] = useState(false);
+  const [invoiceLegalOpen, setInvoiceLegalOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const canManage = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_payroll));
   const canApprove = role === 'owner' || (role === 'admin' && Boolean(capabilities?.approve_payroll));
@@ -827,13 +829,18 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     setInvoiceDraft({
       invoice_number: `TC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${employeeCode}`,
       issue_date: today(),
-      due_date: period?.pay_date ?? today(),
       memo: '',
     });
+    setInvoiceAcknowledged(false);
+    setInvoiceLegalOpen(false);
     setInvoiceModal(item);
   };
   const createInvoiceFile = () => {
     if (!invoiceModal || !period) return;
+    if (!invoiceAcknowledged) {
+      onNotice('Confirm the invoice legal notice before downloading.');
+      return;
+    }
     const employee = employees.find((item) => item.id === invoiceModal.employee_profile_id);
     const employeeLabel = employeeName(employee, profiles);
     const invoiceNumber = invoiceDraft.invoice_number.trim() || `TC-${Date.now()}`;
@@ -843,7 +850,7 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${invoiceEscape(invoiceNumber)} · TriCord Invoice Draft</title>
+  <title>${invoiceEscape(invoiceNumber)} · TriCord Invoice</title>
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17151D; background: #F7F6F9; }
     body { margin: 0; padding: 32px; }
@@ -870,12 +877,11 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     <header>
       <div>
         <div class="brand"><span class="mark">///</span><span>TriCord</span></div>
-        <h1>Invoice Draft</h1>
+        <h1>Invoice</h1>
       </div>
       <div class="meta">
         <strong>${invoiceEscape(invoiceNumber)}</strong><br />
-        Issued ${invoiceEscape(formatDate(invoiceDraft.issue_date))}<br />
-        Due ${invoiceEscape(formatDate(invoiceDraft.due_date))}
+        Issued ${invoiceEscape(formatDate(invoiceDraft.issue_date))}
       </div>
     </header>
     <section class="grid">
@@ -891,19 +897,18 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
       </div>
     </section>
     <section>
-      <h2>Draft Summary</h2>
+      <h2>Invoice Summary</h2>
       <table>
         <thead><tr><th>Description</th><th>Hours</th><th>Amount</th></tr></thead>
         <tbody>
           <tr><td>Regular Hours</td><td>${invoiceEscape(Number(invoiceModal.regular_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay - invoiceModal.deductions))}</td></tr>
           <tr><td>Overtime Hours</td><td>${invoiceEscape(Number(invoiceModal.overtime_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(0))}</td></tr>
-          <tr><td>Gross Draft</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay))}</td></tr>
+          <tr><td>Gross Amount</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay))}</td></tr>
           <tr><td>Deductions</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.deductions))}</td></tr>
-          <tr><td><strong>Net Draft</strong></td><td></td><td class="total">${invoiceEscape(formatter.format(invoiceModal.net_pay))}</td></tr>
+          <tr><td><strong>Net Amount</strong></td><td></td><td class="total">${invoiceEscape(formatter.format(invoiceModal.net_pay))}</td></tr>
         </tbody>
       </table>
       ${invoiceDraft.memo.trim() ? `<div class="notice"><strong>Memo:</strong> ${invoiceEscape(invoiceDraft.memo.trim())}</div>` : ''}
-      <div class="notice">TriCord creates payroll preparation and invoice drafts for recordkeeping and review only. Verify all amounts, taxes, legal requirements, and payment details with the appropriate professional before sending, paying, or recording this draft.</div>
     </section>
   </main>
 </body>
@@ -918,7 +923,8 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setInvoiceModal(null);
-    onNotice('Invoice draft created.');
+    setInvoiceAcknowledged(false);
+    onNotice('Invoice downloaded.');
   };
   return <>
   <ModuleFrame icon={Banknote} title="Payroll Preparation" subtitle={canManage ? 'Owner-reviewed draft summaries and compensation records' : 'Your draft compensation summaries'} theme={theme}>
@@ -932,7 +938,8 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
   </ModuleFrame>
   {periodModalOpen && <WorkforceModal title={editingPeriodId ? 'Edit Preparation Period' : 'New Draft Period'} theme={theme} onClose={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} footer={<><button type="button" onClick={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePeriod()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">{editingPeriodId ? 'Save Period' : 'Create Period'}</button></>}><div className="grid gap-4 sm:grid-cols-3"><Field label="Period Start" type="date" value={periodDraft.period_start} onChange={(value) => setPeriodDraft({ ...periodDraft, period_start: value })} theme={theme} /><Field label="Period End" type="date" value={periodDraft.period_end} onChange={(value) => setPeriodDraft({ ...periodDraft, period_end: value, pay_date: periodDraft.pay_date || value })} theme={theme} /><Field label="Pay Date" type="date" value={periodDraft.pay_date} onChange={(value) => setPeriodDraft({ ...periodDraft, pay_date: value })} theme={theme} /></div></WorkforceModal>}
   {itemModal && <WorkforceModal title="Edit Payroll Draft Line" theme={theme} onClose={() => setItemModal(null)} footer={<><button type="button" onClick={() => setItemModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePayrollItem()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Line</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Regular Hours" type="number" value={itemDraft.regular_hours} onChange={(value) => setItemDraft({ ...itemDraft, regular_hours: value })} theme={theme} /><Field label="Overtime Hours" type="number" value={itemDraft.overtime_hours} onChange={(value) => setItemDraft({ ...itemDraft, overtime_hours: value })} theme={theme} /><Field label="Gross Pay" type="number" value={itemDraft.gross_pay} onChange={(value) => setItemDraft({ ...itemDraft, gross_pay: value })} theme={theme} /><Field label="Deductions" type="number" value={itemDraft.deductions} onChange={(value) => setItemDraft({ ...itemDraft, deductions: value })} theme={theme} /><Field label="Net Pay" type="number" value={itemDraft.net_pay} onChange={(value) => setItemDraft({ ...itemDraft, net_pay: value })} theme={theme} /></div></WorkforceModal>}
-  {invoiceModal && period && <WorkforceModal title="Create Invoice Draft" theme={theme} onClose={() => setInvoiceModal(null)} footer={<><button type="button" onClick={() => setInvoiceModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => createInvoiceFile()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Download Invoice</button></>}><div className="space-y-4"><div className={cn('rounded-xl border p-4', panel(theme))}><p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Prepared For</p><h3 className="mt-1 text-lg font-bold">{employeeName(employees.find((employee) => employee.id === invoiceModal.employee_profile_id), profiles)}</h3><p className={cn('mt-1 text-sm', muted(theme))}>{period.name} · Net Draft {formatter.format(invoiceModal.net_pay)}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Invoice Number" value={invoiceDraft.invoice_number} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, invoice_number: value })} theme={theme} /><Field label="Issue Date" type="date" value={invoiceDraft.issue_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, issue_date: value })} theme={theme} /><Field label="Due Date" type="date" value={invoiceDraft.due_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, due_date: value })} theme={theme} /><Field label="Memo" value={invoiceDraft.memo} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, memo: value })} theme={theme} wide /></div><p className={cn('text-xs leading-5', muted(theme))}>TriCord creates invoice drafts for recordkeeping and review only. Verify all compensation, tax, legal, and payment details before sending or paying.</p></div></WorkforceModal>}
+  {invoiceModal && period && <WorkforceModal title="Create Invoice Draft" theme={theme} onClose={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} footer={<><button type="button" onClick={() => { setInvoiceModal(null); setInvoiceLegalOpen(false); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => createInvoiceFile()} disabled={!invoiceAcknowledged} className={cn('h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]', !invoiceAcknowledged && 'cursor-not-allowed opacity-50')}>Download Invoice</button></>}><div className="space-y-4"><div className={cn('rounded-xl border p-4', panel(theme))}><p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Prepared For</p><h3 className="mt-1 text-lg font-bold">{employeeName(employees.find((employee) => employee.id === invoiceModal.employee_profile_id), profiles)}</h3><p className={cn('mt-1 text-sm', muted(theme))}>{period.name} · Net Amount {formatter.format(invoiceModal.net_pay)}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Invoice Number" value={invoiceDraft.invoice_number} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, invoice_number: value })} theme={theme} /><Field label="Issue Date" type="date" value={invoiceDraft.issue_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, issue_date: value })} theme={theme} /><Field label="Memo" value={invoiceDraft.memo} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, memo: value })} theme={theme} wide /></div><label className={cn('flex items-start gap-3 rounded-xl border p-3 text-sm leading-5', panel(theme))}><input type="checkbox" required checked={invoiceAcknowledged} onChange={(event) => setInvoiceAcknowledged(event.target.checked)} className="mt-1 h-4 w-4 accent-[var(--accent)]" /><span>I understand and agree that this invoice is a draft intended for recordkeeping and review purposes only. <button type="button" onClick={(event) => { event.preventDefault(); setInvoiceLegalOpen(true); }} className="font-semibold text-[var(--accent-strong)] underline underline-offset-2">Legal Notice / Terms</button></span></label></div></WorkforceModal>}
+  {invoiceLegalOpen && <WorkforceModal title="Invoice Legal Notice" theme={theme} onClose={() => setInvoiceLegalOpen(false)} footer={<button type="button" onClick={() => setInvoiceLegalOpen(false)} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Close</button>}><div className={cn('space-y-3 text-sm leading-6', muted(theme))}><p>TriCord generates invoice drafts only. Invoice drafts are provided for recordkeeping and internal review and are not a substitute for professional financial, tax, payroll, legal, or compliance advice.</p><ul className="list-disc space-y-2 pl-5"><li>TriCord does not verify the accuracy of compensation amounts, taxes, deductions, payment information, bank or wallet details, or any other financial information.</li><li>TriCord does not determine whether an invoice, payroll record, payment, tax treatment, employment classification, or financial workflow complies with applicable laws or contracts.</li><li>You are fully responsible for reviewing and confirming all invoice information before sending the invoice, recording it, or making any payment.</li></ul></div></WorkforceModal>}
   {ruleModalOpen && <WorkforceModal title="Add Preparation Item" theme={theme} onClose={() => setRuleModalOpen(false)} footer={<><button type="button" onClick={() => setRuleModalOpen(false)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveRule()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Item</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Item Name" value={ruleDraft.name} onChange={(value) => setRuleDraft({ ...ruleDraft, name: value })} theme={theme} /><SelectField label="Type" value={ruleDraft.rule_kind} options={['earning', 'deduction']} onChange={(value) => setRuleDraft({ ...ruleDraft, rule_kind: value as 'earning' | 'deduction' })} theme={theme} /><SelectField label="Calculation" value={ruleDraft.calculation_type} options={['percentage', 'fixed']} onChange={(value) => setRuleDraft({ ...ruleDraft, calculation_type: value as 'percentage' | 'fixed' })} theme={theme} /><Field label={ruleDraft.calculation_type === 'percentage' ? 'Percentage' : 'Fixed amount'} type="number" value={ruleDraft.value} onChange={(value) => setRuleDraft({ ...ruleDraft, value })} theme={theme} /></div></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;

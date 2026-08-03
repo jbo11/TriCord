@@ -455,9 +455,11 @@ function ensureNotificationWorker() {
     return Promise.resolve(null);
   }
   if (!notificationWorkerRegistrationPromise) {
+    const workerScope = PUBLIC_ASSET_BASE.endsWith('/') ? PUBLIC_ASSET_BASE : `${PUBLIC_ASSET_BASE}/`;
     notificationWorkerRegistrationPromise = navigator.serviceWorker
-      .register(resolvePublicAssetUrl('tricord-notifications-sw.js'), { scope: PUBLIC_ASSET_BASE })
+      .register(resolvePublicAssetUrl('tricord-notifications-sw.js'), { scope: workerScope })
       .then(async (registration) => {
+        void registration.update().catch(() => undefined);
         try {
           return await Promise.race([
             navigator.serviceWorker.ready,
@@ -467,7 +469,10 @@ function ensureNotificationWorker() {
           return registration;
         }
       })
-      .catch(() => null);
+      .catch(() => {
+        notificationWorkerRegistrationPromise = null;
+        return null;
+      });
   }
   return notificationWorkerRegistrationPromise;
 }
@@ -494,17 +499,7 @@ async function showDesktopNotification(title: string, options: TriCordNotificati
     data: { ...(typeof options.data === 'object' && options.data ? options.data : {}), url: window.location.href },
   };
 
-  let workerFailure = '';
-  const registration = await ensureNotificationWorker();
-  if (registration?.showNotification) {
-    try {
-      await registration.showNotification(title, notificationOptions);
-      return { ok: true, mode: 'service-worker' };
-    } catch (error) {
-      workerFailure = notificationErrorMessage(error);
-    }
-  }
-
+  let browserFailure = '';
   try {
     const notification = new Notification(title, notificationOptions);
     notification.onclick = () => {
@@ -513,14 +508,29 @@ async function showDesktopNotification(title: string, options: TriCordNotificati
     };
     return { ok: true, mode: 'browser' };
   } catch (error) {
-    const browserFailure = notificationErrorMessage(error);
-    return {
-      ok: false,
-      reason: workerFailure
-        ? `Service worker notification failed (${workerFailure}); browser fallback failed (${browserFailure}).`
-        : `Browser notification failed (${browserFailure}).`,
-    };
+    browserFailure = notificationErrorMessage(error);
   }
+
+  const registration = await ensureNotificationWorker();
+  if (registration?.showNotification) {
+    try {
+      await registration.showNotification(title, notificationOptions);
+      return { ok: true, mode: 'service-worker' };
+    } catch (error) {
+      const workerFailure = notificationErrorMessage(error);
+      return {
+        ok: false,
+        reason: `Browser notification failed (${browserFailure}); service worker fallback failed (${workerFailure}).`,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: browserFailure
+      ? `Browser notification failed (${browserFailure}).`
+      : 'Desktop notifications could not be delivered by this browser.',
+  };
 }
 
 export default function App() {
@@ -955,10 +965,9 @@ export default function App() {
     const latestAt = Date.parse(latestNotificationActivityAt);
     const previousAt = previousNotifiedAt ? Date.parse(previousNotifiedAt) : 0;
     const hasNewActivity = !previousNotifiedAt || latestAt > previousAt;
-    const unreadIncreased = notificationUnreadCount > previousUnreadCountRef.current;
     const isBackground = document.visibilityState !== 'visible' || !document.hasFocus();
     if (hasNewActivity) lastNotifiedActivityRef.current = latestNotificationActivityAt;
-    if (hasNewActivity && unreadIncreased && isBackground) {
+    if (hasNewActivity && isBackground) {
       const body = `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'} in TriCord.`;
       if (notificationPreferences.sound) playNotificationTone();
       if (notificationPreferences.desktop) {

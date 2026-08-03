@@ -5422,21 +5422,6 @@ function SettingsModal({
     onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
   };
 
-  const sendTestNotification = async () => {
-    setNotificationFeedback('');
-    const result = await showDesktopNotification('TriCord Test Notification', {
-      body: 'Desktop notifications are ready for new TriCord activity.',
-      tag: `tricord-test-${Date.now()}`,
-      requireInteraction: true,
-    });
-    if (result.ok) {
-      setNotificationFeedback(`Desktop test notification sent through ${result.mode === 'service-worker' ? 'the browser notification service' : 'Chrome'}. If no banner appears, check macOS System Settings > Notifications > Chrome and Focus or Do Not Disturb.`);
-    } else {
-      const reason = 'reason' in result ? result.reason : 'Unknown notification error.';
-      setNotificationFeedback(`TriCord could not show the test notification: ${reason}`);
-    }
-  };
-
   return (
     <ModalShell theme={theme} title={modalTitles[section]} onClose={onClose} wide={section === 'profile' || section === 'help'} full={section === 'help'}>
       <div className="grid gap-5">
@@ -5647,13 +5632,6 @@ function SettingsModal({
             <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => void updateNotificationPreference('taskAssignments', checked)} />
             <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => void updateNotificationPreference('announcements', checked)} />
             <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need an approved transactional email provider before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-inherit pt-4">
-            <button type="button" onClick={() => void sendTestNotification()} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
-              <Bell className="h-4 w-4" />
-              Send Test Notification
-            </button>
-            {notificationFeedback && <p className={cn('text-sm leading-6', muted(theme))}>{notificationFeedback}</p>}
           </div>
         </section>}
 

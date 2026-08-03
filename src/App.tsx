@@ -143,6 +143,7 @@ const GOOGLE_DRIVE_PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.metadat
 const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL || '/';
 const USER_GUIDE_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.pdf`;
 const googleScriptPromises = new Map<string, Promise<void>>();
+let notificationWorkerRegistrationPromise: Promise<ServiceWorkerRegistration | null> | null = null;
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
 type AccentColor = 'tangerine' | 'violet' | 'blue' | 'teal' | 'rose';
@@ -429,30 +430,96 @@ function playNotificationTone() {
   }
 }
 
-function showDesktopNotification(title: string, options: NotificationOptions = {}) {
-  if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') return false;
+function resolvePublicAssetUrl(assetPath: string) {
+  const assetBase = PUBLIC_ASSET_BASE.replace(/\/$/, '');
+  const normalizedPath = assetPath.replace(/^\//, '');
+  return new URL(`${assetBase}/${normalizedPath}`, window.location.origin).toString();
+}
+
+type DesktopNotificationResult =
+  | { ok: true; mode: 'service-worker' | 'browser' }
+  | { ok: false; reason: string };
+
+type TriCordNotificationOptions = NotificationOptions & {
+  renotify?: boolean;
+  requireInteraction?: boolean;
+  timestamp?: number;
+};
+
+function notificationErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function ensureNotificationWorker() {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return Promise.resolve(null);
+  }
+  if (!notificationWorkerRegistrationPromise) {
+    notificationWorkerRegistrationPromise = navigator.serviceWorker
+      .register(resolvePublicAssetUrl('tricord-notifications-sw.js'), { scope: PUBLIC_ASSET_BASE })
+      .then(async (registration) => {
+        try {
+          return await Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise<ServiceWorkerRegistration>((resolve) => window.setTimeout(() => resolve(registration), 1500)),
+          ]);
+        } catch {
+          return registration;
+        }
+      })
+      .catch(() => null);
+  }
+  return notificationWorkerRegistrationPromise;
+}
+
+async function showDesktopNotification(title: string, options: TriCordNotificationOptions = {}): Promise<DesktopNotificationResult> {
+  if (typeof window === 'undefined') return { ok: false, reason: 'Desktop notifications are only available in a browser.' };
+  if (!('Notification' in window)) return { ok: false, reason: 'This browser does not support desktop notifications.' };
+
+  let permission = Notification.permission;
+  if (permission === 'default') permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    return { ok: false, reason: 'Notifications are blocked for this site. Allow notifications in Chrome and macOS System Settings.' };
+  }
+
+  const notificationOptions: TriCordNotificationOptions = {
+    ...options,
+    icon: options.icon ?? resolvePublicAssetUrl('tricord-logo.png'),
+    badge: options.badge ?? resolvePublicAssetUrl('favicon.ico'),
+    tag: options.tag ?? `tricord-${Date.now()}`,
+    renotify: true,
+    requireInteraction: options.requireInteraction ?? false,
+    timestamp: Date.now(),
+    silent: false,
+    data: { ...(typeof options.data === 'object' && options.data ? options.data : {}), url: window.location.href },
+  };
+
+  let workerFailure = '';
+  const registration = await ensureNotificationWorker();
+  if (registration?.showNotification) {
+    try {
+      await registration.showNotification(title, notificationOptions);
+      return { ok: true, mode: 'service-worker' };
+    } catch (error) {
+      workerFailure = notificationErrorMessage(error);
+    }
+  }
+
   try {
-    const resolveAssetUrl = (assetPath: string) => {
-      const assetBase = PUBLIC_ASSET_BASE.replace(/\/$/, '');
-      const normalizedPath = assetPath.replace(/^\//, '');
-      return new URL(`${assetBase}/${normalizedPath}`, window.location.href).toString();
-    };
-    const notificationOptions: NotificationOptions & { renotify?: boolean } = {
-      icon: resolveAssetUrl('tricord-logo.png'),
-      badge: resolveAssetUrl('favicon.ico'),
-      tag: options.tag ?? `tricord-${Date.now()}`,
-      renotify: true,
-      silent: false,
-      ...options,
-    };
     const notification = new Notification(title, notificationOptions);
     notification.onclick = () => {
       window.focus();
       notification.close();
     };
-    return true;
-  } catch {
-    return false;
+    return { ok: true, mode: 'browser' };
+  } catch (error) {
+    const browserFailure = notificationErrorMessage(error);
+    return {
+      ok: false,
+      reason: workerFailure
+        ? `Service worker notification failed (${workerFailure}); browser fallback failed (${browserFailure}).`
+        : `Browser notification failed (${browserFailure}).`,
+    };
   }
 }
 
@@ -713,7 +780,7 @@ export default function App() {
     const unreadCount = Math.max(notificationUnreadCountRef.current, 1);
     if (preferences.sound) playNotificationTone();
     if (preferences.desktop) {
-      showDesktopNotification('TriCord Update', {
+      void showDesktopNotification('TriCord Update', {
         body: `${unreadCount} unread update${unreadCount === 1 ? '' : 's'}`,
         tag: `tricord-unread-${postId}`,
       });
@@ -895,7 +962,7 @@ export default function App() {
       const body = `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'} in TriCord.`;
       if (notificationPreferences.sound) playNotificationTone();
       if (notificationPreferences.desktop) {
-        showDesktopNotification('TriCord Update', {
+        void showDesktopNotification('TriCord Update', {
           body,
           tag: 'tricord-unread-activity',
         });
@@ -966,7 +1033,7 @@ export default function App() {
         const key = `${task.id}:${task.updated_at}:${task.reminder_at ?? ''}:${task.due_at ?? ''}`;
         if (!shouldRemind || taskReminderKeysRef.current.has(key)) return;
         taskReminderKeysRef.current.add(key);
-        showDesktopNotification('TriCord Task Reminder', { body: task.due_at ? `${task.title} is due ${formatTaskDate(task.due_at)}.` : task.title, tag: `tricord-task-${task.id}` });
+        void showDesktopNotification('TriCord Task Reminder', { body: task.due_at ? `${task.title} is due ${formatTaskDate(task.due_at)}.` : task.title, tag: `tricord-task-${task.id}` });
         if (notificationPreferences.sound) playNotificationTone();
       });
     };
@@ -5331,47 +5398,34 @@ function SettingsModal({
     }
     if (key === 'desktop' && value) {
       setNotificationFeedback('');
-      if (!('Notification' in window)) {
-        setNotificationFeedback('This browser does not support desktop notifications.');
-        return;
-      }
-      if (Notification.permission !== 'granted') {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          setNotificationFeedback('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
-          return;
-        }
-      }
-      const shown = showDesktopNotification('TriCord Notifications Enabled', {
+      const result = await showDesktopNotification('TriCord Notifications Enabled', {
         body: 'You will receive alerts while TriCord is open in the background.',
         tag: 'tricord-notifications-enabled',
+        requireInteraction: true,
       });
-      setNotificationFeedback(shown ? 'Test notification sent. If it does not appear, check macOS System Settings > Notifications > Chrome.' : 'Chrome could not show a desktop notification.');
+      if (result.ok) {
+        setNotificationFeedback(`Test notification sent through ${result.mode === 'service-worker' ? 'the browser notification service' : 'Chrome'}. If it does not appear, check macOS System Settings > Notifications > Chrome and Focus or Do Not Disturb.`);
+      } else {
+        const reason = 'reason' in result ? result.reason : 'Unknown notification error.';
+        setNotificationFeedback(`TriCord could not show a desktop notification: ${reason}`);
+      }
     }
     onNotificationPreferencesChange({ ...notificationPreferences, [key]: value });
   };
 
   const sendTestNotification = async () => {
     setNotificationFeedback('');
-    const feedback: string[] = [];
-    if ('Notification' in window) {
-      if (Notification.permission !== 'granted') {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          feedback.push('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
-        }
-      }
-      if (Notification.permission === 'granted') {
-        const shown = showDesktopNotification('TriCord Test Notification', {
-          body: 'Desktop notifications are ready for new TriCord activity.',
-          tag: `tricord-test-${Date.now()}`,
-        });
-        feedback.push(shown ? 'Desktop test notification sent.' : 'Chrome could not show a desktop notification.');
-      }
+    const result = await showDesktopNotification('TriCord Test Notification', {
+      body: 'Desktop notifications are ready for new TriCord activity.',
+      tag: `tricord-test-${Date.now()}`,
+      requireInteraction: true,
+    });
+    if (result.ok) {
+      setNotificationFeedback(`Desktop test notification sent through ${result.mode === 'service-worker' ? 'the browser notification service' : 'Chrome'}. If no banner appears, check macOS System Settings > Notifications > Chrome and Focus or Do Not Disturb.`);
     } else {
-      feedback.push('This browser does not support desktop notifications.');
+      const reason = 'reason' in result ? result.reason : 'Unknown notification error.';
+      setNotificationFeedback(`TriCord could not show the test notification: ${reason}`);
     }
-    setNotificationFeedback(`${feedback.join(' ')} If desktop alerts do not appear, check macOS System Settings > Notifications > Chrome.`);
   };
 
   return (

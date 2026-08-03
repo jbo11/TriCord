@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Clock3, Coffee, ExternalLink, FileUp,
-  Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Users,
+  FileText, Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, ReceiptText, RefreshCw, Search, ShieldCheck, Square, Users,
   Trash2, Undo2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -713,6 +713,8 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
   const [ruleDraft, setRuleDraft] = useState({ name: '', rule_kind: 'deduction' as 'earning' | 'deduction', calculation_type: 'percentage' as 'fixed' | 'percentage', value: '0' });
   const [itemModal, setItemModal] = useState<PayrollItem | null>(null);
   const [itemDraft, setItemDraft] = useState({ regular_hours: '0', overtime_hours: '0', gross_pay: '0', deductions: '0', net_pay: '0' });
+  const [invoiceModal, setInvoiceModal] = useState<PayrollItem | null>(null);
+  const [invoiceDraft, setInvoiceDraft] = useState({ invoice_number: '', issue_date: today(), due_date: today(), memo: '' });
   const [confirmDialog, setConfirmDialog] = useState<WorkforceConfirmState | null>(null);
   const canManage = role === 'owner' || (role === 'admin' && Boolean(capabilities?.manage_payroll));
   const canApprove = role === 'owner' || (role === 'admin' && Boolean(capabilities?.approve_payroll));
@@ -817,6 +819,107 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
       },
     });
   };
+  const invoiceEscapeMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const invoiceEscape = (value: string | number | null | undefined) => String(value ?? '').replace(/[&<>"']/g, (char) => invoiceEscapeMap[char] ?? char);
+  const openInvoiceModal = (item: PayrollItem) => {
+    const employeeLabel = employeeName(employees.find((employee) => employee.id === item.employee_profile_id), profiles);
+    const employeeCode = employeeLabel.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toUpperCase().slice(0, 12) || 'EMPLOYEE';
+    setInvoiceDraft({
+      invoice_number: `TC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${employeeCode}`,
+      issue_date: today(),
+      due_date: period?.pay_date ?? today(),
+      memo: '',
+    });
+    setInvoiceModal(item);
+  };
+  const createInvoiceFile = () => {
+    if (!invoiceModal || !period) return;
+    const employee = employees.find((item) => item.id === invoiceModal.employee_profile_id);
+    const employeeLabel = employeeName(employee, profiles);
+    const invoiceNumber = invoiceDraft.invoice_number.trim() || `TC-${Date.now()}`;
+    const currency = settings?.currency_code ?? 'USD';
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${invoiceEscape(invoiceNumber)} · TriCord Invoice Draft</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17151D; background: #F7F6F9; }
+    body { margin: 0; padding: 32px; }
+    main { max-width: 820px; margin: 0 auto; background: #fff; border: 1px solid #E7E3EA; border-radius: 18px; box-shadow: 0 20px 50px rgba(23, 21, 29, 0.10); overflow: hidden; }
+    header { display: flex; justify-content: space-between; gap: 24px; padding: 32px; border-bottom: 1px solid #E7E3EA; background: linear-gradient(135deg, #FFF7ED, #FFFFFF); }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; }
+    h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.18em; color: #716A78; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; }
+    .mark { display: inline-flex; height: 42px; width: 42px; align-items: center; justify-content: center; border-radius: 12px; background: #FF6B13; color: #17151D; font-weight: 900; }
+    .meta { text-align: right; font-size: 13px; color: #4F4857; line-height: 1.7; }
+    section { padding: 28px 32px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .box { border: 1px solid #E7E3EA; border-radius: 14px; padding: 18px; background: #FCFBFD; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 14px; }
+    th { text-align: left; color: #716A78; font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; border-bottom: 1px solid #E7E3EA; padding: 12px; }
+    td { border-bottom: 1px solid #E7E3EA; padding: 14px 12px; }
+    .total { font-size: 24px; font-weight: 900; color: #C93A0A; }
+    .notice { margin-top: 22px; border-left: 4px solid #FF6B13; background: #FFF7ED; padding: 14px 16px; color: #5B2A12; font-size: 13px; line-height: 1.6; }
+    @media print { body { background: #fff; padding: 0; } main { border: 0; box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="brand"><span class="mark">///</span><span>TriCord</span></div>
+        <h1>Invoice Draft</h1>
+      </div>
+      <div class="meta">
+        <strong>${invoiceEscape(invoiceNumber)}</strong><br />
+        Issued ${invoiceEscape(formatDate(invoiceDraft.issue_date))}<br />
+        Due ${invoiceEscape(formatDate(invoiceDraft.due_date))}
+      </div>
+    </header>
+    <section class="grid">
+      <div class="box">
+        <h2>Prepared For</h2>
+        <strong>${invoiceEscape(employeeLabel)}</strong><br />
+        ${invoiceEscape(employee?.department || 'No Department Listed')}
+      </div>
+      <div class="box">
+        <h2>Preparation Period</h2>
+        <strong>${invoiceEscape(period.name)}</strong><br />
+        Currency: ${invoiceEscape(currency)}
+      </div>
+    </section>
+    <section>
+      <h2>Draft Summary</h2>
+      <table>
+        <thead><tr><th>Description</th><th>Hours</th><th>Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Regular Hours</td><td>${invoiceEscape(Number(invoiceModal.regular_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay - invoiceModal.deductions))}</td></tr>
+          <tr><td>Overtime Hours</td><td>${invoiceEscape(Number(invoiceModal.overtime_hours).toFixed(2))}</td><td>${invoiceEscape(formatter.format(0))}</td></tr>
+          <tr><td>Gross Draft</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.gross_pay))}</td></tr>
+          <tr><td>Deductions</td><td></td><td>${invoiceEscape(formatter.format(invoiceModal.deductions))}</td></tr>
+          <tr><td><strong>Net Draft</strong></td><td></td><td class="total">${invoiceEscape(formatter.format(invoiceModal.net_pay))}</td></tr>
+        </tbody>
+      </table>
+      ${invoiceDraft.memo.trim() ? `<div class="notice"><strong>Memo:</strong> ${invoiceEscape(invoiceDraft.memo.trim())}</div>` : ''}
+      <div class="notice">TriCord creates payroll preparation and invoice drafts for recordkeeping and review only. Verify all amounts, taxes, legal requirements, and payment details with the appropriate professional before sending, paying, or recording this draft.</div>
+    </section>
+  </main>
+</body>
+</html>`;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${invoiceNumber.replace(/[^a-z0-9-]+/gi, '-')}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setInvoiceModal(null);
+    onNotice('Invoice draft created.');
+  };
   return <>
   <ModuleFrame icon={Banknote} title="Payroll Preparation" subtitle={canManage ? 'Owner-reviewed draft summaries and compensation records' : 'Your draft compensation summaries'} theme={theme}>
     <div className="mb-5 grid gap-4 xl:grid-cols-2">
@@ -824,11 +927,12 @@ function PayrollPage({ workspaceId, userId, role, profiles, capabilities, theme,
       {canManage && <details className={cn('rounded-lg border p-4', panel(theme))}><summary className="cursor-pointer font-bold">Preparation Rules ({rules.length})</summary><div className="mt-3 space-y-2">{rules.map((rule) => <div key={rule.id} className="flex items-center justify-between gap-3 rounded-lg border border-current/10 px-3 py-2"><span><strong className="block text-sm">{rule.name}</strong><span className={cn('text-xs capitalize', muted(theme))}>{rule.rule_kind} · {rule.calculation_type} · {rule.value}{rule.calculation_type === 'percentage' ? '%' : ` ${settings?.currency_code ?? ''}`}</span></span><button aria-label="Delete preparation item" title="Delete preparation item" onClick={() => void deleteRule(rule.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#FCA5A5] text-[#B91C1C]"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div><button onClick={() => void addRule()} className={cn('mt-3 inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />Add Item</button></details>}
     </div>
     <div className="flex flex-wrap items-center justify-between gap-3"><select value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)} className={cn('h-11 min-w-64 rounded-lg border px-3 text-sm', panel(theme))}><option value="">Select preparation period</option>{periods.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}</select>{canManage && <div className="flex flex-wrap gap-2"><button onClick={() => void createPeriod()} className={cn('inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}><Plus className="h-4 w-4" />New Draft Period</button>{period && <><IconAction label="Edit preparation period" icon={Pencil} onClick={() => editPeriod()} /><IconAction label="Delete preparation period" icon={Trash2} onClick={() => deletePeriod()} /><button onClick={() => void generate()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><RefreshCw className="h-4 w-4" />Prepare Draft</button></>}</div>}</div>
-    {period && <><div className="mt-5 grid gap-4 sm:grid-cols-3"><Metric label="Gross Draft" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.gross_pay), 0))} theme={theme} /><Metric label="Net Draft" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Status" value={period.status} accent theme={theme} /></div>{canApprove && period.status === 'calculated' && <button onClick={() => void setStatus('approved')} className="mt-4 h-10 rounded-lg bg-[#16A34A] px-4 text-sm font-bold text-white">Approve Draft</button>}{canManage && period.status === 'approved' && <button onClick={() => void setStatus('paid')} className="mt-4 h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Mark Recorded</button>}<div className="mt-5"><DataTable headers={['Employee', 'Regular Hours', 'Overtime', 'Gross', 'Deductions', 'Net', 'Actions']} theme={theme}>{periodItems.map((item) => <tr key={item.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employees.find((employee) => employee.id === item.employee_profile_id), profiles)}</Cell><Cell>{Number(item.regular_hours).toFixed(2)}</Cell><Cell>{Number(item.overtime_hours).toFixed(2)}</Cell><Cell>{formatter.format(item.gross_pay)}</Cell><Cell>{formatter.format(item.deductions)}</Cell><Cell strong>{formatter.format(item.net_pay)}</Cell><Cell>{canManage ? <div className="flex gap-2"><IconAction label="Edit payroll draft line" icon={Pencil} onClick={() => editPayrollItem(item)} /><IconAction label="Delete payroll draft line" icon={Trash2} onClick={() => deletePayrollItem(item)} /></div> : <span className={muted(theme)}>—</span>}</Cell></tr>)}</DataTable></div></>}
+    {period && <><div className="mt-5 grid gap-4 sm:grid-cols-3"><Metric label="Gross Draft" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.gross_pay), 0))} theme={theme} /><Metric label="Net Draft" value={formatter.format(periodItems.reduce((sum, item) => sum + Number(item.net_pay), 0))} theme={theme} /><Metric label="Status" value={period.status} accent theme={theme} /></div>{canApprove && period.status === 'calculated' && <button onClick={() => void setStatus('approved')} className="mt-4 h-10 rounded-lg bg-[#16A34A] px-4 text-sm font-bold text-white">Approve Draft</button>}{canManage && period.status === 'approved' && <button onClick={() => void setStatus('paid')} className="mt-4 h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Mark Recorded</button>}<div className="mt-5"><DataTable headers={['Employee', 'Regular Hours', 'Overtime', 'Gross', 'Deductions', 'Net', 'Actions']} theme={theme}>{periodItems.map((item) => <tr key={item.id} className={cn('border-b last:border-0', border(theme))}><Cell strong>{employeeName(employees.find((employee) => employee.id === item.employee_profile_id), profiles)}</Cell><Cell>{Number(item.regular_hours).toFixed(2)}</Cell><Cell>{Number(item.overtime_hours).toFixed(2)}</Cell><Cell>{formatter.format(item.gross_pay)}</Cell><Cell>{formatter.format(item.deductions)}</Cell><Cell strong>{formatter.format(item.net_pay)}</Cell><Cell>{canManage ? <div className="flex gap-2"><IconAction label="Edit payroll draft line" icon={Pencil} onClick={() => editPayrollItem(item)} /><IconAction label="Delete payroll draft line" icon={Trash2} onClick={() => deletePayrollItem(item)} /><IconAction label="Create invoice draft" icon={ReceiptText} onClick={() => openInvoiceModal(item)} accent /></div> : <span className={muted(theme)}>—</span>}</Cell></tr>)}</DataTable></div></>}
     {!period && <EmptyState icon={Banknote} title="No Preparation Period Selected" body={canManage ? 'Create the first preparation period to build an owner-reviewed draft from attendance records.' : 'Your draft summaries will appear here.'} theme={theme} />}
   </ModuleFrame>
   {periodModalOpen && <WorkforceModal title={editingPeriodId ? 'Edit Preparation Period' : 'New Draft Period'} theme={theme} onClose={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} footer={<><button type="button" onClick={() => { setPeriodModalOpen(false); setEditingPeriodId(''); }} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePeriod()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">{editingPeriodId ? 'Save Period' : 'Create Period'}</button></>}><div className="grid gap-4 sm:grid-cols-3"><Field label="Period Start" type="date" value={periodDraft.period_start} onChange={(value) => setPeriodDraft({ ...periodDraft, period_start: value })} theme={theme} /><Field label="Period End" type="date" value={periodDraft.period_end} onChange={(value) => setPeriodDraft({ ...periodDraft, period_end: value, pay_date: periodDraft.pay_date || value })} theme={theme} /><Field label="Pay Date" type="date" value={periodDraft.pay_date} onChange={(value) => setPeriodDraft({ ...periodDraft, pay_date: value })} theme={theme} /></div></WorkforceModal>}
   {itemModal && <WorkforceModal title="Edit Payroll Draft Line" theme={theme} onClose={() => setItemModal(null)} footer={<><button type="button" onClick={() => setItemModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void savePayrollItem()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Line</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Regular Hours" type="number" value={itemDraft.regular_hours} onChange={(value) => setItemDraft({ ...itemDraft, regular_hours: value })} theme={theme} /><Field label="Overtime Hours" type="number" value={itemDraft.overtime_hours} onChange={(value) => setItemDraft({ ...itemDraft, overtime_hours: value })} theme={theme} /><Field label="Gross Pay" type="number" value={itemDraft.gross_pay} onChange={(value) => setItemDraft({ ...itemDraft, gross_pay: value })} theme={theme} /><Field label="Deductions" type="number" value={itemDraft.deductions} onChange={(value) => setItemDraft({ ...itemDraft, deductions: value })} theme={theme} /><Field label="Net Pay" type="number" value={itemDraft.net_pay} onChange={(value) => setItemDraft({ ...itemDraft, net_pay: value })} theme={theme} /></div></WorkforceModal>}
+  {invoiceModal && period && <WorkforceModal title="Create Invoice Draft" theme={theme} onClose={() => setInvoiceModal(null)} footer={<><button type="button" onClick={() => setInvoiceModal(null)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => createInvoiceFile()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Download Invoice</button></>}><div className="space-y-4"><div className={cn('rounded-xl border p-4', panel(theme))}><p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Prepared For</p><h3 className="mt-1 text-lg font-bold">{employeeName(employees.find((employee) => employee.id === invoiceModal.employee_profile_id), profiles)}</h3><p className={cn('mt-1 text-sm', muted(theme))}>{period.name} · Net Draft {formatter.format(invoiceModal.net_pay)}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Invoice Number" value={invoiceDraft.invoice_number} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, invoice_number: value })} theme={theme} /><Field label="Issue Date" type="date" value={invoiceDraft.issue_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, issue_date: value })} theme={theme} /><Field label="Due Date" type="date" value={invoiceDraft.due_date} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, due_date: value })} theme={theme} /><Field label="Memo" value={invoiceDraft.memo} onChange={(value) => setInvoiceDraft({ ...invoiceDraft, memo: value })} theme={theme} wide /></div><p className={cn('text-xs leading-5', muted(theme))}>TriCord creates invoice drafts for recordkeeping and review only. Verify all compensation, tax, legal, and payment details before sending or paying.</p></div></WorkforceModal>}
   {ruleModalOpen && <WorkforceModal title="Add Preparation Item" theme={theme} onClose={() => setRuleModalOpen(false)} footer={<><button type="button" onClick={() => setRuleModalOpen(false)} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', buttonSurface(theme))}>Cancel</button><button type="button" onClick={() => void saveRule()} className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]">Save Item</button></>}><div className="grid gap-4 sm:grid-cols-2"><Field label="Item Name" value={ruleDraft.name} onChange={(value) => setRuleDraft({ ...ruleDraft, name: value })} theme={theme} /><SelectField label="Type" value={ruleDraft.rule_kind} options={['earning', 'deduction']} onChange={(value) => setRuleDraft({ ...ruleDraft, rule_kind: value as 'earning' | 'deduction' })} theme={theme} /><SelectField label="Calculation" value={ruleDraft.calculation_type} options={['percentage', 'fixed']} onChange={(value) => setRuleDraft({ ...ruleDraft, calculation_type: value as 'percentage' | 'fixed' })} theme={theme} /><Field label={ruleDraft.calculation_type === 'percentage' ? 'Percentage' : 'Fixed amount'} type="number" value={ruleDraft.value} onChange={(value) => setRuleDraft({ ...ruleDraft, value })} theme={theme} /></div></WorkforceModal>}
   {confirmDialog && <WorkforceConfirmModal dialog={confirmDialog} theme={theme} onClose={() => setConfirmDialog(null)} onNotice={onNotice} />}
   </>;
@@ -1188,7 +1292,7 @@ function AttendanceStatus({ entry }: { entry: TimeEntry }) {
   if (!entry.clock_out) return <span className="inline-flex rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent-strong)]">Active</span>;
   return <span className="inline-flex rounded-full bg-[#E5E7EB] px-2.5 py-1 text-xs font-semibold text-[#374151]">Needs Confirmation</span>;
 }
-function IconAction({ label, icon: Icon, onClick }: { label: string; icon: typeof Check; onClick: () => void }) { return <button aria-label={label} title={label} onClick={onClick} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-current/20"><Icon className="h-3.5 w-3.5" /></button>; }
+function IconAction({ label, icon: Icon, onClick, accent = false }: { label: string; icon: typeof Check; onClick: () => void; accent?: boolean }) { return <button aria-label={label} title={label} onClick={onClick} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border transition', accent ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)]' : 'border-current/20 hover:bg-current/5')}><Icon className="h-3.5 w-3.5" /></button>; }
 function EmptyState({ icon: Icon, title, body, theme }: { icon: typeof Banknote; title: string; body: string; theme: Theme }) { return <div className={cn('mt-8 flex min-h-56 flex-col items-center justify-center rounded-lg border p-8 text-center', panel(theme))}><Icon className="h-8 w-8 text-[var(--accent)]" /><h3 className="mt-3 font-bold">{title}</h3><p className={cn('mt-1 max-w-md text-sm', muted(theme))}>{body}</p></div>; }
 function MiniAvatar({ profile, large = false }: { profile?: AppProfile; large?: boolean }) { const name = profile?.nickname || profile?.display_name || 'E'; return profile?.avatar_url ? <img src={profile.avatar_url} alt="" className={cn('rounded-lg object-cover', large ? 'h-12 w-12' : 'h-9 w-9')} /> : <span className={cn('flex items-center justify-center rounded-lg bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]', large ? 'h-12 w-12' : 'h-9 w-9 text-sm')}>{name.slice(0, 1).toUpperCase()}</span>; }
 function panel(theme: Theme) { return theme === 'dark' ? 'border-white/10 bg-white/[0.04] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#17151D]'; }

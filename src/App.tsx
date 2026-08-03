@@ -432,14 +432,24 @@ function playNotificationTone() {
 function showDesktopNotification(title: string, options: NotificationOptions = {}) {
   if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') return false;
   try {
-    const assetBase = PUBLIC_ASSET_BASE.replace(/\/$/, '');
+    const resolveAssetUrl = (assetPath: string) => {
+      const assetBase = PUBLIC_ASSET_BASE.replace(/\/$/, '');
+      const normalizedPath = assetPath.replace(/^\//, '');
+      return new URL(`${assetBase}/${normalizedPath}`, window.location.href).toString();
+    };
     const notificationOptions: NotificationOptions & { renotify?: boolean } = {
-      icon: `${assetBase}/tricord-logo.png`,
-      badge: `${assetBase}/favicon.ico`,
+      icon: resolveAssetUrl('tricord-logo.png'),
+      badge: resolveAssetUrl('favicon.ico'),
+      tag: options.tag ?? `tricord-${Date.now()}`,
       renotify: true,
+      silent: false,
       ...options,
     };
-    new Notification(title, notificationOptions);
+    const notification = new Notification(title, notificationOptions);
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
     return true;
   } catch {
     return false;
@@ -870,21 +880,27 @@ export default function App() {
       previousUnreadCountRef.current = notificationUnreadCount;
       return;
     }
-    const shouldNotify = notificationUnreadCount > previousUnreadCountRef.current && (document.visibilityState !== 'visible' || !document.hasFocus());
-    const notifyBackgroundActivity = () => {
-      if (!shouldNotify) return;
-      if (notificationPreferences.sound) playNotificationTone();
-      if (notificationPreferences.desktop) showDesktopNotification('TriCord Update', { body: `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'}`, tag: 'tricord-unread-activity' });
-    };
-    if (!lastNotifiedActivityRef.current) {
-      lastNotifiedActivityRef.current = latestNotificationActivityAt;
-      notifyBackgroundActivity();
-      previousUnreadCountRef.current = notificationUnreadCount;
+    if (notificationUnreadCount <= 0) {
+      previousUnreadCountRef.current = 0;
       return;
     }
-    const hasNewActivity = Date.parse(latestNotificationActivityAt) > Date.parse(lastNotifiedActivityRef.current);
-    if (hasNewActivity) notifyBackgroundActivity();
+    const previousNotifiedAt = lastNotifiedActivityRef.current;
+    const latestAt = Date.parse(latestNotificationActivityAt);
+    const previousAt = previousNotifiedAt ? Date.parse(previousNotifiedAt) : 0;
+    const hasNewActivity = !previousNotifiedAt || latestAt > previousAt;
+    const unreadIncreased = notificationUnreadCount > previousUnreadCountRef.current;
+    const isBackground = document.visibilityState !== 'visible' || !document.hasFocus();
     if (hasNewActivity) lastNotifiedActivityRef.current = latestNotificationActivityAt;
+    if (hasNewActivity && unreadIncreased && isBackground) {
+      const body = `${notificationUnreadCount} unread update${notificationUnreadCount === 1 ? '' : 's'} in TriCord.`;
+      if (notificationPreferences.sound) playNotificationTone();
+      if (notificationPreferences.desktop) {
+        showDesktopNotification('TriCord Update', {
+          body,
+          tag: 'tricord-unread-activity',
+        });
+      }
+    }
     previousUnreadCountRef.current = notificationUnreadCount;
   }, [latestNotificationActivityAt, notificationPreferences.desktop, notificationPreferences.sound, notificationUnreadCount]);
 
@@ -5309,7 +5325,10 @@ function SettingsModal({
   };
 
   const updateNotificationPreference = async (key: keyof NotificationPreferences, value: boolean) => {
-    if (key === 'email' && value) return;
+    if (key === 'email' && value) {
+      setNotificationFeedback('Email notifications need an approved transactional email provider before they can be enabled.');
+      return;
+    }
     if (key === 'desktop' && value) {
       setNotificationFeedback('');
       if (!('Notification' in window)) {
@@ -5334,22 +5353,25 @@ function SettingsModal({
 
   const sendTestNotification = async () => {
     setNotificationFeedback('');
-    if (!('Notification' in window)) {
-      setNotificationFeedback('This browser does not support desktop notifications.');
-      return;
-    }
-    if (Notification.permission !== 'granted') {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setNotificationFeedback('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
-        return;
+    const feedback: string[] = [];
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          feedback.push('Desktop notifications are blocked. Enable them for this site in Chrome and macOS System Settings.');
+        }
       }
+      if (Notification.permission === 'granted') {
+        const shown = showDesktopNotification('TriCord Test Notification', {
+          body: 'Desktop notifications are ready for new TriCord activity.',
+          tag: `tricord-test-${Date.now()}`,
+        });
+        feedback.push(shown ? 'Desktop test notification sent.' : 'Chrome could not show a desktop notification.');
+      }
+    } else {
+      feedback.push('This browser does not support desktop notifications.');
     }
-    const shown = showDesktopNotification('TriCord Test Notification', {
-      body: 'Desktop notifications are ready for new TriCord activity.',
-      tag: `tricord-test-${Date.now()}`,
-    });
-    setNotificationFeedback(shown ? 'Test notification sent. If it does not appear, check macOS System Settings > Notifications > Chrome.' : 'Chrome could not show a desktop notification.');
+    setNotificationFeedback(`${feedback.join(' ')} If desktop alerts do not appear, check macOS System Settings > Notifications > Chrome.`);
   };
 
   return (
@@ -5561,7 +5583,7 @@ function SettingsModal({
             <NotificationToggle theme={theme} title="Direct messages and replies" body="Count new discussion replies from other Hub members." checked={notificationPreferences.directMessages} onChange={(checked) => void updateNotificationPreference('directMessages', checked)} />
             <NotificationToggle theme={theme} title="Task assignments" body="Count newly assigned tasks." checked={notificationPreferences.taskAssignments} onChange={(checked) => void updateNotificationPreference('taskAssignments', checked)} />
             <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => void updateNotificationPreference('announcements', checked)} />
-            <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need the transactional email delivery workflow enabled before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
+            <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need an approved transactional email provider before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-inherit pt-4">
             <button type="button" onClick={() => void sendTestNotification()} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>

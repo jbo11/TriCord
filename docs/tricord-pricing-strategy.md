@@ -37,7 +37,7 @@ TriCord now uses one customer-facing subscription model instead of Free, Plus, a
 | File uploads and shared links | Yes, subject to upload limits and storage safeguards |
 | Connected Gmail / Google Workspace email | Yes, user-authorized mailbox required |
 | Connected Outlook / Microsoft 365 email | Yes, user-authorized mailbox required |
-| Workforce tools | Yes, Owner-controlled per Hub |
+| Team tools | Yes, Owner-controlled per Hub |
 | Attendance tracking | Yes, with policy notices and employee acceptance workflow where required |
 | Employee records | Yes, recordkeeping only |
 | Payroll preparation records | Yes, recordkeeping and preparation only; TriCord is not a payroll processor |
@@ -61,4 +61,4 @@ TriCord now uses one customer-facing subscription model instead of Free, Plus, a
 
 ## Compliance Notes
 
-TriCord provides collaboration and business productivity tools. Workforce and payroll-preparation features are recordkeeping and organizational tools only. TriCord is not a payroll processor, tax advisor, legal advisor, HR consulting service, PEO, employer of record, or compliance guarantee. Customers remain responsible for complying with applicable employment, payroll, privacy, tax, and industry-specific laws.
+TriCord provides collaboration and business productivity tools. Team and payroll-preparation features are recordkeeping and organizational tools only. TriCord is not a payroll processor, tax advisor, legal advisor, HR consulting service, PEO, employer of record, or compliance guarantee. Customers remain responsible for complying with applicable employment, payroll, privacy, tax, and industry-specific laws.

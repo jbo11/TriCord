@@ -244,7 +244,7 @@ function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload, logoImage: Pd
   if (logoImage) image('Logo', 31, 728, 24, 24);
   else rect(31, 728, 24, 24, '#F97316');
   text('TriCord', 63, 742, 13, '#17151D', 'F2');
-  text('Workforce Records', 63, 728, 9, '#3D3744');
+  text('Team Records', 63, 728, 9, '#3D3744');
   rightText('Earnings Statement', 575, 739, 18, '#17151D', 'F2');
   rightText(payload.invoiceNumber, 575, 721, 9, '#6F6878');
 
@@ -1220,7 +1220,7 @@ function ReportsPage({ workspaceId, role, profiles, capabilities, theme, onNotic
     });
   };
   return <>
-    <ModuleFrame icon={Gauge} title="Attendance Reports" subtitle="Attendance records and workforce summaries" theme={theme}>
+    <ModuleFrame icon={Gauge} title="Attendance Reports" subtitle="Attendance records and team summaries" theme={theme}>
       <div className="mb-5 grid max-w-3xl items-end gap-3 sm:grid-cols-2 xl:grid-cols-[160px_160px_180px_150px]">
         <Field label="From" type="date" value={from} onChange={setFrom} theme={theme} compact />
         <Field label="To" type="date" value={to} onChange={setTo} theme={theme} compact />
@@ -1528,7 +1528,7 @@ function payrollFieldSuggestions(country: string) {
 }
 function validateWorkforceUpload(file: File, imageOnly = false) {
   if (file.size <= 0) return 'The selected file is empty.';
-  if (file.size > MAX_WORKFORCE_UPLOAD_BYTES) return `Workforce uploads must be ${formatFileSize(MAX_WORKFORCE_UPLOAD_BYTES)} or smaller for this release.`;
+  if (file.size > MAX_WORKFORCE_UPLOAD_BYTES) return `Team uploads must be ${formatFileSize(MAX_WORKFORCE_UPLOAD_BYTES)} or smaller for this release.`;
   if (imageOnly && !file.type.startsWith('image/')) return 'Choose an image file.';
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (BLOCKED_WORKFORCE_FILE_EXTENSIONS.has(extension)) return 'This file type is blocked for security.';

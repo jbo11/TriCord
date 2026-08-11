@@ -2562,7 +2562,7 @@ function Sidebar({
               </nav>
 
               <section className="mt-7 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
+          <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-black uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
             {canCreateSpaces && (
               <button aria-label="Create room" onClick={onCreateSpace} className={cn('rounded p-1', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}>

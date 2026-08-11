@@ -27,6 +27,7 @@ import {
   ChartNoAxesCombined,
   GripVertical,
   Headphones,
+  Home,
   Image as ImageIcon,
   Inbox,
   Link2,
@@ -58,6 +59,7 @@ import {
   Trash2,
   User,
   UserPlus,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -1674,7 +1676,7 @@ export default function App() {
   return (
     <div className={cn('relative h-dvh overflow-hidden font-sans', theme === 'dark' ? 'bg-[#0C0B10] text-[#FAF9FC]' : 'bg-[#F5F4F7] text-[#17151D]')}>
       <AmbientMotifs theme={theme} />
-      <div className="relative z-10 grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="relative z-10 grid h-full min-h-0 grid-cols-1 lg:grid-cols-[352px_minmax(0,1fr)]">
         <Sidebar
           activeSpaceId={activeSpaceId}
           onSpaceChange={handleSpaceChange}
@@ -2400,7 +2402,16 @@ function Sidebar({
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || canManageRooms;
-  const showBusinessNav = currentRole !== 'guest' && (canViewTimekeeping || canViewHr || canViewPayroll || canViewReports || canManageAdmin);
+  const workforceNavItems = [
+    { view: 'timekeeping' as const, icon: Clock3, label: 'Attendance', visible: canViewTimekeeping },
+    { view: 'hr' as const, icon: BriefcaseBusiness, label: 'Employee Records', visible: canViewHr },
+    { view: 'payroll' as const, icon: Banknote, label: 'Payroll Prep', visible: canViewPayroll },
+    { view: 'reports' as const, icon: ChartNoAxesCombined, label: 'Attendance Reports', visible: canViewReports },
+  ];
+  const visibleWorkforceNavItems = workforceNavItems.filter((item) => item.visible);
+  const showWorkforceNav = currentRole !== 'guest' && visibleWorkforceNavItems.length > 0;
+  const isWorkforceView = view === 'timekeeping' || view === 'hr' || view === 'payroll' || view === 'reports';
+  const activeSidebarSection = isWorkforceView ? 'workforce' : 'home';
   const canCreateSpaces = canManageSpaces || currentRole === 'member';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -2411,7 +2422,6 @@ function Sidebar({
   const [roomCompactSettings, setRoomCompactSettings] = useState<RoomCompactSettings>({ all: false, rooms: {} });
   const [reorderMode, setReorderMode] = useState(false);
   const [draggedRoomId, setDraggedRoomId] = useState('');
-  const [workforceNavOpen, setWorkforceNavOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
@@ -2501,46 +2511,57 @@ function Sidebar({
     onOpenAccount(nextView);
   };
 
+  const openHomeSection = () => {
+    if (activeSidebarSection !== 'home') onViewChange('feed');
+  };
+
+  const openWorkforceSection = () => {
+    const nextWorkforceView = visibleWorkforceNavItems[0]?.view;
+    if (!nextWorkforceView) return;
+    if (activeSidebarSection !== 'workforce') onViewChange(nextWorkforceView);
+  };
+
   return (
     <>
       <div className={cn('fixed inset-0 z-40 bg-black/30 lg:hidden', sidebarOpen ? 'block' : 'hidden')} onClick={onClose} />
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-visible border-r px-4 py-5 transition-transform lg:static lg:z-[9000] lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[352px] max-w-[calc(100vw-1rem)] overflow-visible border-r transition-transform lg:static lg:z-[9000] lg:translate-x-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           theme === 'dark' ? 'border-white/10 bg-[#111018]' : 'border-[#E7E3EA] bg-white',
         )}
       >
-        <div className="mb-5 flex items-center justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
-              <TriCordLogo className="h-9 w-9" />
-            </div>
-            <div className="min-w-0">
-              <p className={cn('truncate text-xl font-bold tracking-tight', theme === 'dark' ? 'text-[#FAF9FC]' : 'text-[#17151D]')}>TriCord</p>
-              <p className={cn('truncate text-xs', muted(theme))}>{currentRoleLabel}</p>
-            </div>
+        <div className={cn('flex w-20 shrink-0 flex-col items-center border-r px-2 py-4', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F7F6F9]')}>
+          <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/20">
+            <TriCordLogo className="h-8 w-8" />
           </div>
-          <button aria-label="Close navigation" onClick={onClose} className={cn('rounded-lg border p-2 lg:hidden', subtleButton(theme))}>
-            <X className="h-4 w-4" />
-          </button>
+          <nav className="flex w-full flex-col gap-2">
+            <RailButton icon={Home} label="Home" active={activeSidebarSection === 'home'} onClick={openHomeSection} theme={theme} />
+            <RailButton icon={Users} label="Team" active={activeSidebarSection === 'workforce'} disabled={!showWorkforceNav} onClick={openWorkforceSection} theme={theme} />
+          </nav>
         </div>
 
-        <nav className="space-y-1">
-          <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
-          <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
-          {currentRole !== 'guest' && <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />}
-          {showBusinessNav && <div className={cn('my-3 flex items-center border-t pt-2', theme === 'dark' ? 'border-white/10' : 'border-[#E7E3EA]')}><span className={cn('min-w-0 flex-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em]', muted(theme))}>Workforce</span><button type="button" aria-label={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} title={workforceNavOpen ? 'Collapse workforce navigation' : 'Expand workforce navigation'} onClick={() => setWorkforceNavOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md border', subtleButton(theme))}><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !workforceNavOpen && '-rotate-90')} /></button></div>}
-          {showBusinessNav && workforceNavOpen && <>
-            {canViewTimekeeping && <NavButton icon={Clock3} label="Attendance" active={view === 'timekeeping'} onClick={() => onViewChange('timekeeping')} theme={theme} />}
-            {canViewHr && <NavButton icon={BriefcaseBusiness} label="Employee Records" active={view === 'hr'} onClick={() => onViewChange('hr')} theme={theme} />}
-            {canViewPayroll && <NavButton icon={Banknote} label="Payroll Prep" active={view === 'payroll'} onClick={() => onViewChange('payroll')} theme={theme} />}
-            {canViewReports && <NavButton icon={ChartNoAxesCombined} label="Attendance Reports" active={view === 'reports'} onClick={() => onViewChange('reports')} theme={theme} />}
-            {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
-          </>}
-        </nav>
+        <div className="flex min-w-0 flex-1 flex-col overflow-visible px-4 py-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div className="min-w-0">
+              <p className={cn('truncate text-xl font-bold tracking-tight', theme === 'dark' ? 'text-[#FAF9FC]' : 'text-[#17151D]')}>TriCord</p>
+              <p className={cn('truncate text-xs', muted(theme))}>{activeSidebarSection === 'workforce' ? 'Team' : currentRoleLabel}</p>
+            </div>
+            <button aria-label="Close navigation" onClick={onClose} className={cn('rounded-lg border p-2 lg:hidden', subtleButton(theme))}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
 
-        <section className="mt-7 flex min-h-0 flex-1 flex-col overflow-hidden">
+          {activeSidebarSection === 'home' ? (
+            <>
+              <nav className="space-y-1">
+                <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
+                <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
+                {currentRole !== 'guest' && <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />}
+                {canManageAdmin && <NavButton icon={ShieldCheck} label="Hub Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
+              </nav>
+
+              <section className="mt-7 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
             {canCreateSpaces && (
@@ -2627,7 +2648,22 @@ function Sidebar({
               );
             })}
           </div>
-        </section>
+              </section>
+            </>
+          ) : (
+            <section className="flex min-h-0 flex-1 flex-col">
+              <nav className="space-y-1">
+                {visibleWorkforceNavItems.map((item) => (
+                  <NavButton key={item.view} icon={item.icon} label={item.label} active={view === item.view} onClick={() => onViewChange(item.view)} theme={theme} />
+                ))}
+              </nav>
+              {!showWorkforceNav && (
+                <div className={cn('mt-6 rounded-lg border border-dashed p-4 text-sm leading-6', muted(theme))}>
+                  Team modules are not available for this role or Hub.
+                </div>
+              )}
+            </section>
+          )}
 
         <div ref={accountMenuRef} className="relative z-[9500] mt-auto shrink-0 pt-4">
           {accountMenuOpen && (
@@ -2724,6 +2760,7 @@ function Sidebar({
             </div>
             <ChevronRight className={cn('h-4 w-4 shrink-0 transition-transform', accountMenuOpen && '-rotate-90')} />
           </button>
+        </div>
         </div>
       </aside>
     </>
@@ -4551,7 +4588,7 @@ function AdminView({
             <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
-                <div><p className="text-sm font-semibold">Delegated capabilities</p><p className={cn('text-xs leading-5', muted(theme))}>Admins receive only the workforce capabilities the Owner enables. Every capability is enforced in both the interface and database.</p></div>
+                <div><p className="text-sm font-semibold">Delegated capabilities</p><p className={cn('text-xs leading-5', muted(theme))}>Admins receive only the team capabilities the Owner enables. Every capability is enforced in both the interface and database.</p></div>
               </div>
             </div>
           )}
@@ -5660,7 +5697,7 @@ function SettingsModal({
               <section className={cn('rounded-lg border p-4', surface(theme))}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub Settings · Workforce</p>
+                    <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub Settings · Team</p>
                     <p className={cn('mt-2 text-sm leading-6', muted(theme))}>These are Hub-level settings. Optional recordkeeping modules stay off until an Owner enables them for this Hub.</p>
                   </div>
                   <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">Owner only</span>
@@ -5729,16 +5766,16 @@ function SettingsModal({
             <HelpTopic title="Rooms" body="Use Rooms to separate work by team, client, department, or process. Owners and Admins can create, rename, pin, sort, move, and delete Rooms. Members can manage Rooms they created when permissions allow." theme={theme} />
             <HelpTopic title="Tasks" body="Plan work with Board, List, and Calendar views. Add assignees, priorities, due dates, project names, statuses, and archive completed or canceled work." theme={theme} />
             <HelpTopic title="Knowledge base" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting notes, and SOPs. Everyone except Guests can read knowledge articles; Owners and permitted Admins can manage them." theme={theme} />
-            <HelpTopic title="Attendance Tracking" body="Optional workforce tools. Admins and Members can clock in and out when enabled. Owners can correct records. Hub Owners can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
-            <HelpTopic title="Employee Records" body="Optional workforce tools. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
-            <HelpTopic title="Payroll Preparation" body="Optional workforce tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
-            <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled workforce records from one operational dashboard." theme={theme} />
+            <HelpTopic title="Attendance Tracking" body="Optional team tools. Admins and Members can clock in and out when enabled. Owners can correct records. Hub Owners can configure per-employee requirements such as GPS, IP, device information, photo verification, workdays, and grace periods." theme={theme} />
+            <HelpTopic title="Employee Records" body="Optional team tools. Manage employee profiles, leave requests, documents, performance records, and compensation details. Members can view their own records and request changes where direct editing is not allowed." theme={theme} />
+            <HelpTopic title="Payroll Preparation" body="Optional team tools. Organize preparation periods, compensation items, payment details, and owner-reviewed draft summaries. TriCord is not a payroll processor and does not provide tax, legal, HR, or compliance advice." theme={theme} />
+            <HelpTopic title="Attendance Reports" body="Review tasks, activity, and enabled team records from one operational dashboard." theme={theme} />
             <HelpTopic title="Admin, roles, and permissions" body="Owners manage billing, roles, invites, Room access, and granular Admin capabilities. Admins only see features they have been granted. Members and Guests see only what is relevant to their role." theme={theme} />
             <HelpTopic title="Email Features" body="Connect Gmail or Microsoft 365 in Settings, then start a discussion reply with a to: line. Add optional lines such as cc:, bcc:, and subj:, leave a blank line, then write the message. The @ symbol is only for tagging Hub members." theme={theme} />
-            <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive workforce data." theme={theme} />
+            <HelpTopic title="Privacy and employee notices" body="Owners are responsible for giving employees and users any required notices before collecting employee records, compensation details, GPS, IP address, device information, selfie images, or other sensitive team data." theme={theme} />
             <HelpTopic title="HIPAA and regulated data" body="TriCord is not designed for protected health information, medical records, payment card numbers, bank login credentials, or other regulated data unless TriCord has expressly agreed in writing to support that data type." theme={theme} />
             <HelpTopic title="Billing and subscriptions" body="Owners manage the Hub subscription, promo codes, taxes, renewal terms, and payment methods through Stripe Checkout or the billing portal. Standard Hub pricing includes up to 25 employees; larger teams should contact TriCord for a custom plan." theme={theme} />
-            <HelpTopic title="Personalization And Settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Workforce, Help, reporting a problem, and logout." theme={theme} />
+            <HelpTopic title="Personalization And Settings" body="Use Settings to manage profile details, nickname, photo URL or upload, theme, accent color, discussion-panel preference, Team, Help, reporting a problem, and logout." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl plus Backslash on Windows or Linux, or Command plus Backslash on macOS, to hide or show the discussion panel." theme={theme} />
             <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white lg:col-span-3"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
@@ -6132,6 +6169,26 @@ function EmptyState({ theme, icon: Icon, title, body, actionLabel, onAction }: {
         </button>
       )}
     </div>
+  );
+}
+
+function RailButton({ icon: Icon, label, active, disabled = false, onClick, theme }: { icon: LucideIcon; label: string; active: boolean; disabled?: boolean; onClick: () => void; theme: 'light' | 'dark' }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={disabled ? `${label} is not available` : label}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex min-h-16 w-full flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-semibold transition',
+        active ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-sm' : theme === 'dark' ? 'text-[#D8D4DE] hover:bg-white/10 hover:text-white' : 'text-[#5E5767] hover:bg-white hover:text-[#17151D]',
+        disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-inherit',
+      )}
+    >
+      <Icon className="h-5 w-5" />
+      <span className="max-w-full truncate">{label}</span>
+    </button>
   );
 }
 

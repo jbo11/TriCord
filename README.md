@@ -1,6 +1,6 @@
 # TriCord
 
-TriCord is a collaboration-first work hub organized around focused posts, Rooms, tasks, knowledge, files, and optional workforce tools. The root route is a conversion-focused marketing website, while the application runs under `/app`. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
+TriCord is a collaboration-first work hub organized around focused posts, Rooms, tasks, knowledge, files, and optional team tools. The root route is a conversion-focused marketing website, while the application runs under `/app`. The app is a single-page, app-like layout backed by Supabase Auth, Postgres, Realtime, and Row Level Security.
 
 ## Current Scope
 

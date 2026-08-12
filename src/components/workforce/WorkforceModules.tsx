@@ -374,6 +374,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
   const [entryModal, setEntryModal] = useState<{ id: string; clockInDate: string; clockIn: string; clockOutDate: string; clockOut: string } | null>(null);
   const [disputeModal, setDisputeModal] = useState<{ entry: TimeEntry; reason: string } | null>(null);
   const [policyNotice, setPolicyNotice] = useState<{ title: string; body: string; pending?: boolean; employeeProfileId?: string } | null>(null);
+  const [attendanceFilters, setAttendanceFilters] = useState({ query: '', employeeId: 'all', from: monthStart(), to: today(), status: 'all' });
   const policySignatureRef = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [selfie, setSelfie] = useState<File | null>(null);
@@ -392,7 +393,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     const [employeeResult, employeesResult, entriesResult, eventsResult, policiesResult] = await Promise.all([
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle(),
       supabase.from('employee_profiles').select('*').eq('workspace_id', workspaceId),
-      supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).order('clock_in', { ascending: false }).limit(50),
+      supabase.from('time_entries').select('*').eq('workspace_id', workspaceId).order('clock_in', { ascending: false }).limit(500),
       supabase.from('time_events').select('*').eq('workspace_id', workspaceId).order('occurred_at', { ascending: false }).limit(250),
       supabase.from('employee_timekeeping_policies').select('*').eq('workspace_id', workspaceId),
     ]);
@@ -451,9 +452,40 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     return () => { void supabase.removeChannel(channel); };
   }, [load, workspaceId]);
 
-  const attendanceEntries = entries.filter((entry) => attendanceEmployeeIds.has(entry.employee_profile_id));
-  const ownEntries = isExemptEmployee ? [] : attendanceEntries.filter((entry) => entry.employee_profile_id === employee?.id);
+  const employeeById = useMemo(() => new Map(employees.map((item) => [item.id, item])), [employees]);
+  const attendanceEntries = useMemo(() => entries.filter((entry) => attendanceEmployeeIds.has(entry.employee_profile_id)), [attendanceEmployeeIds, entries]);
+  const ownEntries = useMemo(() => isExemptEmployee ? [] : attendanceEntries.filter((entry) => entry.employee_profile_id === employee?.id), [attendanceEntries, employee?.id, isExemptEmployee]);
   const visibleEntries = canConfigure || canManageEntries ? attendanceEntries : ownEntries;
+  const visibleEmployeeOptions = useMemo(() => {
+    const employeeIds = new Set(visibleEntries.map((entry) => entry.employee_profile_id));
+    return attendanceEmployees.filter((item) => employeeIds.has(item.id) || item.id === employee?.id);
+  }, [attendanceEmployees, employee?.id, visibleEntries]);
+  const filteredEntries = useMemo(() => visibleEntries.filter((entry) => {
+    const entryEmployee = employeeById.get(entry.employee_profile_id);
+    const query = attendanceFilters.query.trim().toLowerCase();
+    if (query) {
+      const searchable = [
+        employeeName(entryEmployee, profiles),
+        entryEmployee?.employee_number,
+        entryEmployee?.department,
+        entryEmployee?.position,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!searchable.includes(query)) return false;
+    }
+    if (attendanceFilters.employeeId !== 'all' && entry.employee_profile_id !== attendanceFilters.employeeId) return false;
+    if (attendanceFilters.from && entry.work_date < attendanceFilters.from) return false;
+    if (attendanceFilters.to && entry.work_date > attendanceFilters.to) return false;
+    if (attendanceFilters.status === 'active' && entry.clock_out) return false;
+    if (attendanceFilters.status === 'completed' && !entry.clock_out) return false;
+    if (attendanceFilters.status === 'confirmed' && !entry.confirmed_at) return false;
+    if (attendanceFilters.status === 'unconfirmed' && (!entry.clock_out || entry.confirmed_at)) return false;
+    if (attendanceFilters.status === 'disputed' && entry.dispute_status !== 'pending') return false;
+    return true;
+  }), [attendanceFilters, employeeById, profiles, visibleEntries]);
+  const filteredHours = filteredEntries.reduce((sum, entry) => sum + workedHours(entry, now), 0);
+  const filteredActiveCount = filteredEntries.filter((entry) => !entry.clock_out).length;
+  const filteredDisputeCount = filteredEntries.filter((entry) => entry.dispute_status === 'pending').length;
+  const attendanceTableHeaders = [...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock In', 'Clock Out', 'Break', 'Hours', 'Status', 'Actions'];
   const isOwnEntry = (entry: TimeEntry) => entry.employee_profile_id === employee?.id;
   const canConfirmEntry = (entry: TimeEntry) => Boolean(entry.clock_out) && !entry.confirmed_at && entry.dispute_status !== 'pending' && (canManageEntries || isOwnEntry(entry));
   const canUnconfirmEntry = (entry: TimeEntry) => Boolean(entry.confirmed_at) && canManageEntries;
@@ -617,6 +649,14 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     });
     if (error) onNotice(error.message); else { onNotice(`${data ?? 0} attendance record${data === 1 ? '' : 's'} confirmed.`); await load(); }
   };
+  const confirmFilteredEntries = async () => {
+    if (!supabase) return;
+    const targets = filteredEntries.filter(canConfirmEntry);
+    const results = await Promise.all(targets.map((entry) => supabase.rpc('confirm_time_entry', { target_entry_id: entry.id })));
+    const error = results.find((result) => result.error)?.error;
+    if (error) onNotice(error.message);
+    else { onNotice(`${targets.length} filtered attendance record${targets.length === 1 ? '' : 's'} confirmed.`); await load(); }
+  };
   const submitDispute = async () => {
     if (!supabase || !disputeModal?.reason.trim()) return;
     const { error } = await supabase.rpc('dispute_time_entry', { target_entry_id: disputeModal.entry.id, reason: disputeModal.reason.trim() });
@@ -662,13 +702,43 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
           </div>}
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div><h3 className="font-bold">Attendance Records</h3><p className={cn('mt-1 text-sm', muted(theme))}>Employees can confirm or dispute completed records. Owners and permitted Admins can correct records and review disputes.</p></div>
-            {visibleEntries.some(canConfirmEntry) && <button type="button" onClick={() => void confirmAllEntries()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Check className="h-4 w-4" />Confirm All</button>}
+            {filteredEntries.some(canConfirmEntry) && <button type="button" onClick={() => void confirmFilteredEntries()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-ink)]"><Check className="h-4 w-4" />Confirm Filtered</button>}
           </div>
-          <DataTable headers={[...(role === 'owner' || role === 'admin' ? ['Employee'] : []), 'Date', 'Clock In', 'Clock Out', 'Break', 'Hours', 'Status', 'Actions']} theme={theme}>
-            {visibleEntries.map((entry) => {
+          <section className={cn('rounded-lg border p-4', panel(theme))}>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(190px,1.2fr)_minmax(160px,0.9fr)_repeat(3,minmax(140px,0.75fr))_auto]">
+              <label className="block">
+                <span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Search</span>
+                <span className={cn('flex h-10 items-center gap-2 rounded-lg border px-3', panel(theme))}>
+                  <Search className="h-4 w-4" />
+                  <input value={attendanceFilters.query} onChange={(event) => setAttendanceFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Name, ID, department" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+                </span>
+              </label>
+              {(role === 'owner' || role === 'admin') && (
+                <label className="block">
+                  <span className={cn('mb-1 block text-xs font-semibold', muted(theme))}>Employee</span>
+                  <select value={attendanceFilters.employeeId} onChange={(event) => setAttendanceFilters((current) => ({ ...current, employeeId: event.target.value }))} className={cn('h-10 w-full rounded-lg border px-3 text-sm', panel(theme))}>
+                    <option value="all">All employees</option>
+                    {visibleEmployeeOptions.map((option) => <option key={option.id} value={option.id}>{employeeName(option, profiles)}</option>)}
+                  </select>
+                </label>
+              )}
+              <Field label="From" type="date" compact value={attendanceFilters.from} onChange={(value) => setAttendanceFilters((current) => ({ ...current, from: value }))} theme={theme} />
+              <Field label="To" type="date" compact value={attendanceFilters.to} onChange={(value) => setAttendanceFilters((current) => ({ ...current, to: value }))} theme={theme} />
+              <SelectField label="Status" compact value={attendanceFilters.status} options={['all', 'active', 'completed', 'confirmed', 'unconfirmed', 'disputed']} onChange={(value) => setAttendanceFilters((current) => ({ ...current, status: value }))} theme={theme} />
+              <button type="button" onClick={() => setAttendanceFilters({ query: '', employeeId: 'all', from: monthStart(), to: today(), status: 'all' })} className={cn('h-10 self-end rounded-lg border px-3 text-sm font-semibold', buttonSurface(theme))}>Reset</button>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Metric label="Filtered records" value={String(filteredEntries.length)} theme={theme} />
+              <Metric label="Filtered hours" value={formatDuration(filteredHours)} theme={theme} />
+              <Metric label="Active records" value={String(filteredActiveCount)} theme={theme} />
+              <Metric label="Pending disputes" value={String(filteredDisputeCount)} theme={theme} accent={filteredDisputeCount > 0} />
+            </div>
+          </section>
+          <DataTable headers={attendanceTableHeaders} theme={theme}>
+            {filteredEntries.map((entry) => {
               const entryEvents = eventsByEntry.get(entry.id) ?? [];
               const expanded = expandedEvidenceEntryId === entry.id;
-              const actionColSpan = (role === 'owner' || role === 'admin' ? 1 : 0) + 8;
+              const actionColSpan = attendanceTableHeaders.length;
               return (
                 <Fragment key={entry.id}>
                   <tr className={cn('border-b last:border-0', border(theme))}>
@@ -694,6 +764,7 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
                 </Fragment>
               );
             })}
+            {filteredEntries.length === 0 && <tr><td colSpan={attendanceTableHeaders.length} className={cn('px-4 py-8 text-center text-sm', muted(theme))}>No attendance records match these filters.</td></tr>}
           </DataTable>
         </div>
         {canSeePremiumPolicyNotice && <aside className={cn('h-fit rounded-lg border p-4', panel(theme))}>

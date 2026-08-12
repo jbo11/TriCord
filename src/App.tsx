@@ -4631,13 +4631,13 @@ function AdminView({
                       const removeLabel = membership.role === 'guest' ? 'Remove guest' : 'Remove team member';
                       return (
                         <div key={membership.id} className={cn('rounded-lg border p-3', theme === 'dark' ? 'border-white/10 bg-white/[0.03]' : 'border-[#E7E3EA] bg-white/70')}>
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
                             <Avatar profile={member} />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-bold">{memberName}</p>
                               <p className={cn('text-xs', muted(theme))}>{getRoleLabel(membership.role)}</p>
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
                               <select
                                 value={membership.role}
                                 disabled={membership.role === 'owner' || !canManagePeople}
@@ -4660,9 +4660,10 @@ function AdminView({
                                   aria-label={`${removeLabel}: ${memberName}`}
                                   title={removeLabel}
                                   onClick={() => onRemoveMember(membership)}
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] text-[#B91C1C] transition hover:bg-[#FEF2F2]"
+                                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#FCA5A5] px-3 text-xs font-bold text-[#B91C1C] transition hover:bg-[#FEF2F2]"
                                 >
                                   <Trash2 className="h-4 w-4" />
+                                  Remove
                                 </button>
                               )}
                             </div>

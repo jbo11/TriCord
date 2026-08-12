@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -139,12 +139,8 @@ const MAX_DIRECT_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const MAX_MESSAGE_CHARACTERS = 10000;
 const BLOCKED_FILE_EXTENSIONS = new Set(['ade', 'adp', 'apk', 'app', 'bat', 'bin', 'cmd', 'com', 'cpl', 'dll', 'dmg', 'exe', 'gadget', 'hta', 'ins', 'iso', 'jar', 'js', 'jse', 'lib', 'lnk', 'mde', 'msc', 'msi', 'msp', 'mst', 'osx', 'pif', 'ps1', 'scr', 'sh', 'sys', 'vb', 'vbe', 'vbs', 'vxd', 'ws', 'wsc', 'wsf', 'wsh']);
-const GOOGLE_DRIVE_API_KEY = (import.meta.env.VITE_GOOGLE_API_KEY as string | undefined)?.trim();
-const GOOGLE_DRIVE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim();
-const GOOGLE_DRIVE_PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
 const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL || '/';
 const USER_GUIDE_URL = `${PUBLIC_ASSET_BASE.replace(/\/$/, '')}/tricord-user-guide.pdf`;
-const googleScriptPromises = new Map<string, Promise<void>>();
 let notificationWorkerRegistrationPromise: Promise<ServiceWorkerRegistration | null> | null = null;
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
@@ -179,8 +175,8 @@ const launchPlans: Array<{
     name: 'Standard Hub',
     monthly: '$29/month',
     annual: '$290/year',
-    description: 'One complete Hub for teams up to 25 employees, with collaboration, rooms, tasks, CRM, recruitment, knowledge, attendance, storage, and mailbox capacity included.',
-    highlights: ['Up to 25 employees', '25 mailboxes; shared mailboxes are not included', '25 GB Hub storage', 'Unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance', 'Contact us for teams with more than 25 employees'],
+    description: 'One complete Hub for teams up to 25 employees, with Feed, Rooms, Tasks, Knowledge, Admin controls, optional Team tools, and Hub storage included.',
+    highlights: ['Up to 25 employees', '25 GB Hub storage', 'Unlimited rooms and messages', 'Tasks, knowledge base, and optional Team tools', 'Contact us for teams with more than 25 employees'],
   },
 ];
 
@@ -617,8 +613,6 @@ export default function App() {
   const canManageRooms = hasCapability('manage_rooms');
   const canManageKnowledge = hasCapability('manage_knowledge');
   const savedBusinessModules = useMemo(() => getBusinessModules(selectedWorkspace), [selectedWorkspace]);
-  const subscriptionState = getWorkspaceSubscriptionState(selectedWorkspace);
-  const workspaceReadOnly = subscriptionState.status === 'expired' || subscriptionState.status === 'cancelled';
   const premiumFeatures = true;
   const businessModules = savedBusinessModules;
   const canViewTimekeeping = businessModules.attendance_tracking && canOpenView('timekeeping', currentRole, capabilities);
@@ -1393,14 +1387,15 @@ export default function App() {
       setReactions([]);
       return;
     }
+    const db = supabase;
 
     const [commentResult, attachmentResult] = await Promise.all([
-      supabase
+      db
         .from('comments')
         .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
         .eq('post_id', postId)
         .order('created_at', { ascending: true }),
-      supabase
+      db
         .from('attachments')
         .select('id, workspace_id, post_id, comment_id, uploaded_by, bucket, object_path, filename, mime_type, byte_size, metadata, created_at')
         .eq('post_id', postId)
@@ -1418,7 +1413,7 @@ export default function App() {
     const reactionFilter = commentIds.length > 0
       ? `post_id.eq.${postId},comment_id.in.(${commentIds.join(',')})`
       : `post_id.eq.${postId}`;
-    const reactionResult = await supabase
+    const reactionResult = await db
       .from('reactions')
       .select('id, workspace_id, post_id, comment_id, user_id, emoji, created_at')
       .or(reactionFilter)
@@ -1433,7 +1428,7 @@ export default function App() {
       ((attachmentResult.data ?? []) as AppAttachment[]).map(async (attachment) => {
         const externalUrl = getExternalAttachmentUrl(attachment);
         if (externalUrl) return { ...attachment, signed_url: externalUrl };
-        const { data } = await supabase.storage.from(attachment.bucket).createSignedUrl(attachment.object_path, 3600);
+        const { data } = await db.storage.from(attachment.bucket).createSignedUrl(attachment.object_path, 3600);
         return { ...attachment, signed_url: data?.signedUrl };
       }),
     );
@@ -1456,13 +1451,14 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.access_token) return;
+    const db = supabase;
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
 
     void (async () => {
-      await supabase.realtime.setAuth(session.access_token);
+      await db.realtime.setAuth(session.access_token);
       if (cancelled) return;
-      channel = supabase
+      channel = db
       .channel(`workspace-${workspaceId}`, { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'comments_changed' }, ({ payload }) => {
         const activePostId = selectedPostIdRef.current;
@@ -1556,18 +1552,19 @@ export default function App() {
     return () => {
       cancelled = true;
       if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
-      if (channel) void supabase.removeChannel(channel);
+      if (channel) void db.removeChannel(channel);
     };
   }, [alertUnreadActivity, chatOpen, loadComments, loadWorkspaceData, session?.access_token, session?.user.id, view, workspaceId]);
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.user.id) return;
+    const db = supabase;
     let checking = false;
     const reconcileMessages = async () => {
       const activePostId = selectedPostIdRef.current;
       if (!activePostId || checking || document.visibilityState !== 'visible') return;
       checking = true;
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('comments')
         .select('id, updated_at')
         .eq('post_id', activePostId)
@@ -1743,8 +1740,6 @@ export default function App() {
           canViewHr={canViewHr}
           canViewPayroll={canViewPayroll}
           canViewReports={canViewReports}
-          premiumFeatures={premiumFeatures}
-          businessModules={businessModules}
         />
 
         <main className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -1944,7 +1939,7 @@ export default function App() {
                   onNotice={setNotice}
                 />
               )}
-              {view === 'admin' && canManageAdmin && (
+              {view === 'admin' && canManageAdmin && currentRole && (
                 <AdminView
                   workspace={selectedWorkspace}
                   currentRole={currentRole}
@@ -1964,8 +1959,8 @@ export default function App() {
                     const memberName = getProfileFullName(member, 'Hub member');
                     openConfirmDialog({
                       title: `Remove ${memberName}?`,
-                      body: `This will remove ${memberName} from ${selectedWorkspace?.name ?? 'this Hub'} and revoke their Hub access. Existing posts, tasks, and records stay in the Hub history.`,
-                      confirmLabel: 'Remove access',
+                      body: `Please confirm you want to remove ${memberName} from ${selectedWorkspace?.name ?? 'this Hub'}. They will lose Hub access immediately, but existing posts, tasks, and records will stay in Hub history.`,
+                      confirmLabel: membership.role === 'guest' ? 'Remove guest' : 'Remove employee',
                       onConfirm: async () => {
                         await removeWorkspaceMember(membership.id);
                         await loadWorkspaceData(workspaceId, true);
@@ -2006,11 +2001,13 @@ export default function App() {
               onOpenEmailSettings={() => setAccountModal('email')}
               onReply={async (body, files, externalAttachments, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
+                if (!supabase) throw new Error('Supabase is not configured.');
+                const db = supabase;
                 const emailCommand = parseEmailSendCommand(body);
                 let commentBody = body;
                 if (emailCommand) {
                   if (!selectedEmailAccount) throw new Error('Connect Gmail or Microsoft 365 in Settings before sending email from a discussion.');
-                  const { error } = await supabase.functions.invoke('send-room-email', {
+                  const { error } = await db.functions.invoke('send-room-email', {
                     body: { workspaceId, postId: selectedPost.id, providerAccountId: selectedEmailAccount.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}` },
                   });
                   if (error) throw new Error(await getFunctionErrorMessage(error));
@@ -2377,8 +2374,6 @@ function Sidebar({
   canViewHr,
   canViewPayroll,
   canViewReports,
-  premiumFeatures,
-  businessModules,
 }: {
   activeSpaceId: string;
   onSpaceChange: (spaceId: string) => void;
@@ -2410,8 +2405,6 @@ function Sidebar({
   canViewHr: boolean;
   canViewPayroll: boolean;
   canViewReports: boolean;
-  premiumFeatures: boolean;
-  businessModules: BusinessModules;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || canManageRooms;
@@ -3260,15 +3253,6 @@ function ThreadPanel({
     else if (incomingFiles.length + files.length + externalAttachments.length > MAX_ATTACHMENTS_PER_MESSAGE) setError(`Only ${MAX_ATTACHMENTS_PER_MESSAGE} attachments can be added to one message.`);
   };
 
-  const addExternalAttachment = (attachment: ExternalAttachmentDraft) => {
-    if (files.length + externalAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
-      setError(`Only ${MAX_ATTACHMENTS_PER_MESSAGE} attachments can be added to one message.`);
-      return;
-    }
-    setExternalAttachments((current) => [...current, attachment]);
-    setError('');
-  };
-
   const openFilePicker = (accept: string, capture = false) => {
     const input = fileInputRef.current;
     if (!input) return;
@@ -3978,13 +3962,13 @@ function ThreadWidthPresets({ theme, width, onWidthChange }: { theme: 'light' | 
     { label: 'Balanced', width: 50, detail: 'Equal workspace and discussion' },
     { label: 'Compact', width: 25, detail: 'More room for the workspace' },
   ];
-  const active = options.reduce((closest, option) => Math.abs(option.width - width) < Math.abs(closest.width - width) ? option : closest, options[1]);
+  const activeLabel = options.reduce((closest, option) => Math.abs(option.width - width) < Math.abs(closest.width - width) ? option : closest, options[1]).label;
   return (
     <div className="relative hidden xl:block">
       <button
         type="button"
-        aria-label="Discussion layout"
-        title="Discussion layout"
+        aria-label={`Discussion layout: ${activeLabel}`}
+        title={`Discussion layout: ${activeLabel}`}
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         className={cn('inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold transition', subtleButton(theme))}
@@ -4108,85 +4092,6 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
         </div>
       </div>
     </div>
-  );
-}
-
-function GoogleDriveAttachmentModal({ theme, onClose, onAdd }: { theme: 'light' | 'dark'; onClose: () => void; onAdd: (attachment: ExternalAttachmentDraft) => void }) {
-  const [url, setUrl] = useState('');
-  const [title, setTitle] = useState('');
-  const [error, setError] = useState('');
-  const [picking, setPicking] = useState(false);
-  const pickerConfigured = Boolean(GOOGLE_DRIVE_API_KEY && GOOGLE_DRIVE_CLIENT_ID);
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const normalizedUrl = normalizeGoogleDriveUrl(url);
-    if (!normalizedUrl) {
-      setError('Paste a valid Google Drive, Docs, Sheets, or Slides share link.');
-      return;
-    }
-    onAdd({ provider: 'google_drive', url: normalizedUrl, title: title.trim() || getGoogleDriveAttachmentTitle(normalizedUrl) });
-  };
-
-  const chooseFromDrive = async () => {
-    if (!pickerConfigured) return;
-    setPicking(true);
-    setError('');
-    try {
-      const selected = await openGoogleDrivePicker();
-      selected.forEach(onAdd);
-      if (selected.length) onClose();
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
-    } finally {
-      setPicking(false);
-    }
-  };
-
-  return (
-    <ModalShell theme={theme} title="Attach Google Drive file" onClose={onClose}>
-      <div className="grid gap-4">
-        <p className={cn('text-sm leading-6', muted(theme))}>
-          Choose a file from Google Drive or paste a shared Drive link. TriCord stores the link in this discussion while Google Drive keeps the file permissions and access control.
-        </p>
-        <button
-          type="button"
-          disabled={!pickerConfigured || picking}
-          onClick={() => void chooseFromDrive()}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {picking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-          {picking ? 'Opening Google Drive...' : 'Choose from Google Drive'}
-        </button>
-        {!pickerConfigured && <p className={cn('rounded-lg border px-3 py-2 text-sm leading-6', subtleButton(theme))}>Google Drive browsing is not connected yet. You can still paste a shared Drive link below.</p>}
-        <div className={cn('flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}><span className="h-px flex-1 bg-current/20" />Or paste a link<span className="h-px flex-1 bg-current/20" /></div>
-        <form className="grid gap-4" onSubmit={submit}>
-          <label className="grid gap-2 text-sm font-semibold">
-            Share link
-            <input
-              value={url}
-              onChange={(event) => { setUrl(event.target.value); setError(''); }}
-              placeholder="https://drive.google.com/file/d/..."
-              className={cn('h-11 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))}
-            />
-          </label>
-          <label className="grid gap-2 text-sm font-semibold">
-            Display name
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Optional, for example Compensation worksheet"
-              className={cn('h-11 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))}
-            />
-          </label>
-          {error && <p className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className={cn('h-10 rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>Cancel</button>
-            <button className="h-10 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white">Attach link</button>
-          </div>
-        </form>
-      </div>
-    </ModalShell>
   );
 }
 
@@ -4330,7 +4235,7 @@ function TasksView({
     { value: 'calendar', label: 'Calendar', icon: CalendarDays },
   ];
   return (
-    <StaticPanel theme={theme} title="Tasks" icon={ClipboardList}>
+    <StaticPanel title="Tasks" icon={ClipboardList}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className={cn('inline-flex rounded-lg border p-1', surface(theme))}>
           {tabs.map(({ value, label, icon: Icon }) => <button key={value} onClick={() => setMode(value)} className={cn('inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition', mode === value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : muted(theme))}><Icon className="h-4 w-4" />{label}</button>)}
@@ -4428,7 +4333,7 @@ function KnowledgeView({
   const selectedArticle = visibleArticles.find((article) => article.id === selectedArticleId) ?? visibleArticles[0];
 
   return (
-    <StaticPanel theme={theme} title="Knowledge base" icon={FileText}>
+    <StaticPanel title="Knowledge base" icon={FileText}>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <label className={cn('flex h-11 min-w-60 flex-1 items-center gap-2 rounded-lg border px-3', surface(theme))}>
           <Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search guides, FAQs, and procedures" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
@@ -4550,20 +4455,7 @@ function AdminView({
     else setCapabilityRows((current) => ({
       ...current,
       [targetUserId]: {
-        workspace_id: workspace.id,
-        user_id: targetUserId,
-        manage_members: false,
-        manage_rooms: false,
-        manage_knowledge: false,
-        manage_hr: false,
-        approve_leave: false,
-        manage_timekeeping: false,
-        correct_attendance: false,
-        manage_payroll: false,
-        approve_payroll: false,
-        view_reports: false,
-        view_audit: false,
-        ...current[targetUserId],
+        ...(current[targetUserId] ?? defaultWorkspaceCapabilities(workspace.id, targetUserId)),
         [key]: enabled,
       },
     }));
@@ -4585,7 +4477,7 @@ function AdminView({
   };
 
   return (
-    <StaticPanel theme={theme} title="Admin" icon={ShieldCheck}>
+    <StaticPanel title="Admin" icon={ShieldCheck}>
       <div className="grid gap-4 xl:grid-cols-2">
         <div className={cn('rounded-lg border p-4', surface(theme))}>
           <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Hub</p>
@@ -4660,10 +4552,9 @@ function AdminView({
                                   aria-label={`${removeLabel}: ${memberName}`}
                                   title={removeLabel}
                                   onClick={() => onRemoveMember(membership)}
-                                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#FCA5A5] px-3 text-xs font-bold text-[#B91C1C] transition hover:bg-[#FEF2F2]"
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] text-[#B91C1C] transition hover:bg-[#FEF2F2]"
                                 >
                                   <Trash2 className="h-4 w-4" />
-                                  Remove
                                 </button>
                               )}
                             </div>
@@ -4810,7 +4701,7 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
   );
 }
 
-function StaticPanel({ theme, title, icon: Icon, children }: { theme: 'light' | 'dark'; title: string; icon: LucideIcon; children: ReactNode }) {
+function StaticPanel({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="mb-5 flex shrink-0 items-center gap-3">
@@ -5254,7 +5145,7 @@ Please tell us about your team size and custom plan needs.`);
         <section className={cn('rounded-xl border p-5', surface(theme))}>
           <p className="text-lg font-bold">Standard Hub</p>
           <p className={cn('mt-2 text-sm leading-6', muted(theme))}>
-            One flat subscription for a complete TriCord Hub. The Standard Hub includes up to {STANDARD_HUB_EMPLOYEE_LIMIT} employees, 25 mailboxes, 25 GB of storage, and unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance. Shared mailboxes are not included.
+            One flat subscription for a complete TriCord Hub. The Standard Hub includes up to {STANDARD_HUB_EMPLOYEE_LIMIT} employees, 25 GB of storage, unlimited rooms and messages, tasks, knowledge base, Admin controls, and optional Team tools.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             {launchPlans[0].highlights.map((item) => (
@@ -5701,6 +5592,7 @@ function SettingsModal({
             <NotificationToggle theme={theme} title="Announcements and posts" body="Count new posts in the Hub." checked={notificationPreferences.announcements} onChange={(checked) => void updateNotificationPreference('announcements', checked)} />
             <NotificationToggle theme={theme} title="Email notifications" body="Email notifications need an approved transactional email provider before this browser can subscribe to them." checked={false} disabled onChange={() => undefined} />
           </div>
+          {notificationFeedback && <p className={cn('mt-4 rounded-lg border px-3 py-2 text-sm font-semibold', subtleButton(theme))}>{notificationFeedback}</p>}
         </section>}
 
         {section === 'settings' && (
@@ -6524,11 +6416,12 @@ async function updatePost(postId: string, input: { title: string; body: string; 
 
 async function deletePost(postId: string) {
   if (!supabase) return;
-  const { data: attachmentRows } = await supabase
+  const db = supabase;
+  const { data: attachmentRows } = await db
     .from('attachments')
     .select('bucket, object_path')
     .eq('post_id', postId);
-  const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id').maybeSingle();
+  const { data, error } = await db.from('posts').delete().eq('id', postId).select('id').maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('The post was not deleted. Apply the latest Supabase migration and confirm your account is the author, Owner, or admin.');
   const pathsByBucket = new Map<string, string[]>();
@@ -6536,7 +6429,7 @@ async function deletePost(postId: string) {
     if (attachment.bucket === 'external') return;
     pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
   });
-  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => db.storage.from(bucket).remove(paths)));
 }
 
 async function assignPost(postId: string, assigneeId: string) {
@@ -6665,8 +6558,9 @@ async function updateComment(commentId: string, body: string) {
 
 async function deleteComment(commentId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { data: attachmentRows } = await supabase.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
-  const { data, error } = await supabase.from('comments').delete().eq('id', commentId).select('id').maybeSingle();
+  const db = supabase;
+  const { data: attachmentRows } = await db.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
+  const { data, error } = await db.from('comments').delete().eq('id', commentId).select('id').maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('This message could not be deleted.');
   const pathsByBucket = new Map<string, string[]>();
@@ -6674,7 +6568,7 @@ async function deleteComment(commentId: string) {
     if (attachment.bucket === 'external') return;
     pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
   });
-  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => db.storage.from(bucket).remove(paths)));
 }
 
 async function uploadCommentAttachment(post: AppPost, commentId: string, userId: string, file: File) {
@@ -6987,104 +6881,6 @@ async function getFunctionErrorMessage(error: unknown) {
     }
   }
   return getErrorMessage(error);
-}
-
-function loadGoogleScript(src: string) {
-  const existing = googleScriptPromises.get(src);
-  if (existing) return existing;
-  const promise = new Promise<void>((resolve, reject) => {
-    const loaded = document.querySelector(`script[src="${src}"]`);
-    if (loaded) {
-      resolve();
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Google Drive could not be loaded. Please try again.'));
-    document.head.appendChild(script);
-  });
-  googleScriptPromises.set(src, promise);
-  return promise;
-}
-
-async function loadGooglePickerApi() {
-  await Promise.all([
-    loadGoogleScript('https://accounts.google.com/gsi/client'),
-    loadGoogleScript('https://apis.google.com/js/api.js'),
-  ]);
-  const api = window as Window & { gapi?: { load: (name: string, options: { callback: () => void; onerror: () => void }) => void } };
-  await new Promise<void>((resolve, reject) => {
-    api.gapi?.load('picker', { callback: resolve, onerror: () => reject(new Error('Google Drive picker could not be loaded.')) });
-  });
-}
-
-async function requestGoogleDriveAccessToken() {
-  if (!GOOGLE_DRIVE_CLIENT_ID) throw new Error('Google Drive browsing is not connected yet.');
-  const googleWindow = window as Window & { google?: { accounts?: { oauth2?: { initTokenClient: (config: Record<string, unknown>) => { requestAccessToken: (options?: Record<string, string>) => void } } } } };
-  const oauth = googleWindow.google?.accounts?.oauth2;
-  if (!oauth) throw new Error('Google sign-in could not be loaded. Please try again.');
-  return new Promise<string>((resolve, reject) => {
-    const tokenClient = oauth.initTokenClient({
-      client_id: GOOGLE_DRIVE_CLIENT_ID,
-      scope: GOOGLE_DRIVE_PICKER_SCOPE,
-      callback: (response: { access_token?: string; error?: string }) => {
-        if (response.error) reject(new Error(response.error));
-        else if (response.access_token) resolve(response.access_token);
-        else reject(new Error('Google Drive did not return access.'));
-      },
-      error_callback: () => reject(new Error('Google Drive authorization was cancelled.')),
-    });
-    tokenClient.requestAccessToken({ prompt: 'consent' });
-  });
-}
-
-async function openGoogleDrivePicker() {
-  if (!GOOGLE_DRIVE_API_KEY || !GOOGLE_DRIVE_CLIENT_ID) throw new Error('Google Drive browsing is not connected yet.');
-  await loadGooglePickerApi();
-  const accessToken = await requestGoogleDriveAccessToken();
-  const googleWindow = window as Window & { google?: { picker?: Record<string, any> } };
-  const picker = googleWindow.google?.picker;
-  if (!picker) throw new Error('Google Drive picker could not be opened.');
-
-  return new Promise<ExternalAttachmentDraft[]>((resolve, reject) => {
-    try {
-      const docsView = new picker.DocsView(picker.ViewId.DOCS)
-        .setIncludeFolders(true)
-        .setSelectFolderEnabled(false);
-      const drivePicker = new picker.PickerBuilder()
-        .addView(docsView)
-        .enableFeature(picker.Feature.MULTISELECT_ENABLED)
-        .setDeveloperKey(GOOGLE_DRIVE_API_KEY)
-        .setOAuthToken(accessToken)
-        .setCallback((data: Record<string, any>) => {
-          const action = data[picker.Response.ACTION];
-          if (action === picker.Action.PICKED) {
-            const docs = (data[picker.Response.DOCUMENTS] ?? []) as Array<Record<string, any>>;
-            resolve(docs.map((doc) => {
-              const url = String(doc[picker.Document.URL] ?? doc.url ?? '');
-              const title = String(doc[picker.Document.NAME] ?? doc.name ?? getGoogleDriveAttachmentTitle(url));
-              return {
-                provider: 'google_drive' as const,
-                url,
-                title,
-                mimeType: String(doc[picker.Document.MIME_TYPE] ?? doc.mimeType ?? 'text/uri-list'),
-                iconUrl: typeof doc[picker.Document.ICON_URL] === 'string' ? doc[picker.Document.ICON_URL] : undefined,
-                sizeBytes: Number(doc.sizeBytes ?? 1) || 1,
-              };
-            }).filter((attachment) => normalizeGoogleDriveUrl(attachment.url)));
-          } else if (action === picker.Action.CANCEL) {
-            resolve([]);
-          }
-        })
-        .build();
-      drivePicker.setVisible(true);
-    } catch (caughtError) {
-      reject(caughtError instanceof Error ? caughtError : new Error('Google Drive picker could not be opened.'));
-    }
-  });
 }
 
 function getImageExtension(mimeType: string) {
@@ -7549,8 +7345,22 @@ function formatSubscriptionStatusLabel(workspace?: AppWorkspace | null) {
   return state.daysRemaining == null ? 'Free trial' : `${state.daysRemaining} day${state.daysRemaining === 1 ? '' : 's'} left in trial`;
 }
 
-function normalizePlan(_plan: string): LaunchPlan {
-  return 'tricord';
+function defaultWorkspaceCapabilities(workspaceId: string, userId: string): WorkspaceCapabilities {
+  return {
+    workspace_id: workspaceId,
+    user_id: userId,
+    manage_members: false,
+    manage_rooms: false,
+    manage_knowledge: false,
+    manage_hr: false,
+    approve_leave: false,
+    manage_timekeeping: false,
+    correct_attendance: false,
+    manage_payroll: false,
+    approve_payroll: false,
+    view_reports: false,
+    view_audit: false,
+  };
 }
 
 function getRoleLabel(role: WorkspaceRole) {

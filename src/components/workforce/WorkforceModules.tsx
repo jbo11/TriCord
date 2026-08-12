@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Banknote, BriefcaseBusiness, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Clock3, Coffee, ExternalLink, FileUp,
-  FileText, Gauge, MapPin, MonitorSmartphone, Pause, Pencil, Play, Plus, ReceiptText, RefreshCw, Search, ShieldCheck, Square, Users,
+  Banknote, BriefcaseBusiness, Camera, Check, ChevronDown, ChevronUp, Clock3, Coffee, ExternalLink, FileUp,
+  Gauge, MapPin, MonitorSmartphone, Pencil, Play, Plus, ReceiptText, RefreshCw, Search, ShieldCheck, Square,
   Trash2, Undo2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -226,9 +226,6 @@ function buildTriCordInvoicePdf(payload: TriCordInvoicePdfPayload, logoImage: Pd
   };
   const rect = (x: number, y: number, width: number, height: number, color: string, stroke?: string) => {
     commands.push(`q ${pdfColor(color)} rg ${stroke ? `${pdfColor(stroke)} RG` : ''} ${x} ${y} ${width} ${height} re ${stroke ? 'B' : 'f'} Q`);
-  };
-  const line = (x1: number, y1: number, x2: number, y2: number, color = '#E7E3EA', width = 1) => {
-    commands.push(`q ${pdfColor(color)} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
   };
   const centerText = (content: string | number, centerX: number, y: number, size = 11, color = '#17151D', font: 'F1' | 'F2' = 'F1') => {
     const safe = pdfSafeText(content);
@@ -640,14 +637,6 @@ function TimekeepingPage({ workspaceId, userId, role, profiles, capabilities, th
     if (!supabase || !canUnconfirmEntry(entry)) return;
     const { error } = await supabase.rpc('unconfirm_time_entry', { target_entry_id: entry.id });
     if (error) onNotice(error.message); else { onNotice('Attendance record unconfirmed.'); await load(); }
-  };
-  const confirmAllEntries = async () => {
-    if (!supabase) return;
-    const { data, error } = await supabase.rpc('confirm_time_entries', {
-      target_workspace_id: workspaceId,
-      target_employee_profile_id: canManageEntries ? null : employee?.id ?? null,
-    });
-    if (error) onNotice(error.message); else { onNotice(`${data ?? 0} attendance record${data === 1 ? '' : 's'} confirmed.`); await load(); }
   };
   const confirmFilteredEntries = async () => {
     if (!supabase) return;

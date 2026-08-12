@@ -2,12 +2,9 @@ import { useEffect, useState, type FormEvent, type MouseEvent, type ReactNode } 
 import {
   ArrowRight,
   Bell,
-  BriefcaseBusiness,
-  Check,
   CheckCircle2,
   ChevronRight,
   Clock3,
-  ClipboardList,
   FileText,
   KeyRound,
   LayoutGrid,
@@ -16,7 +13,6 @@ import {
   MousePointer2,
   ShieldCheck,
   Sparkles,
-  Users2,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -29,8 +25,8 @@ export function MarketingHome({ appUrl }: { appUrl: string }) {
     document.body.classList.add('marketing-page');
     const meta = ensureMetaDescription();
     const previousDescription = meta.getAttribute('content') ?? '';
-    document.title = 'TriCord | One workspace for conversations, projects, and team operations';
-    meta.setAttribute('content', 'TriCord helps small businesses and startup teams keep client work, projects, SOPs, tasks, and team operations organized in one focused workspace.');
+    document.title = 'TriCord | A simple hub for team work';
+    meta.setAttribute('content', 'TriCord keeps team conversations, rooms, tasks, knowledge, and optional team records in one focused workspace.');
     return () => {
       document.title = previousTitle;
       document.documentElement.classList.remove('marketing-page');
@@ -68,18 +64,10 @@ export function MarketingHome({ appUrl }: { appUrl: string }) {
       <MarketingHeader appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} />
       <main id="main">
         <Hero appUrl={appUrl} onLaunch={launchApp} />
-        <OutcomeStrip />
-        <OperatingSection />
         <FeatureHighlights />
         <ProductTour appUrl={appUrl} onLaunch={launchApp} />
-        <ProductRhythm appUrl={appUrl} onLaunch={launchApp} />
-        <WorkflowTimeline />
-        <ComparisonSection />
-        <UseCases />
-        <Testimonials />
         <Pricing appUrl={appUrl} onLaunch={launchApp} onContact={() => setContactOpen(true)} />
         <Security />
-        <FAQ />
         <FinalCTA appUrl={appUrl} onLaunch={launchApp} />
       </main>
       <MarketingFooter appUrl={appUrl} marketingBasePath={marketingBasePath} onLaunch={launchApp} onContact={() => setContactOpen(true)} />
@@ -98,7 +86,6 @@ function MarketingHeader({ appUrl, marketingBasePath, onLaunch }: { appUrl: stri
         <nav aria-label="Main navigation" className="hidden items-center gap-7 text-sm font-semibold text-[#5F5668] lg:flex">
           <a className="hover:text-[#17151D]" href={sectionHref('features')}>Features</a>
           <a className="hover:text-[#17151D]" href={sectionHref('tour')}>Tour</a>
-          <a className="hover:text-[#17151D]" href={sectionHref('workflow')}>Workflow</a>
           <a className="hover:text-[#17151D]" href={sectionHref('pricing')}>Pricing</a>
           <a className="hover:text-[#17151D]" href={sectionHref('security')}>Security</a>
         </nav>
@@ -118,17 +105,17 @@ function Hero({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEve
       <div aria-hidden="true" className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-[#F7F5F2] to-transparent opacity-10" />
       <div className="relative z-10 mx-auto grid min-h-[760px] max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8">
         <div className="max-w-3xl">
-          <p className="mb-5 inline-flex rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-bold text-[#FFD7B0] shadow-lg shadow-black/20 backdrop-blur">Built for busy teams that need fewer loose ends</p>
-          <h1 className="text-5xl font-black leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">Run client work, projects, & team operations from one hub.</h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-white/74 sm:text-xl">TriCord gives small businesses and startups one place to discuss work, assign follow-ups, save procedures, and manage everyday operations without chasing updates across separate tools.</p>
+          <p className="mb-5 inline-flex rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-bold text-[#FFD7B0] shadow-lg shadow-black/20 backdrop-blur">Simple work hub for growing teams</p>
+          <h1 className="text-5xl font-black leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">Team work, rooms, tasks, and knowledge in one place.</h1>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-white/74 sm:text-xl">TriCord keeps the day clear: post updates, assign work, save procedures, and manage optional team records without a crowded tool stack.</p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <MarketingButton href={appUrl} onClick={onLaunch}>Start Trial <ArrowRight className="h-4 w-4" /></MarketingButton>
-            <a href="#tour" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/16 bg-white/8 px-5 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/14">Explore Interactive Tour <ChevronRight className="h-4 w-4" /></a>
+            <a href="#tour" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/16 bg-white/8 px-5 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/14">View Tour <ChevronRight className="h-4 w-4" /></a>
           </div>
           <div className="mt-10 grid max-w-3xl gap-4 text-sm text-white/68 sm:grid-cols-3">
-            <Metric value="One hub" label="for work, tasks, and records" />
-            <Metric value="Clear owners" label="for every next step" />
-            <Metric value="Less chasing" label="across chat and spreadsheets" />
+            <Metric value="Feed" label="for active updates" />
+            <Metric value="Tasks" label="with clear owners" />
+            <Metric value="Team" label="tools when needed" />
           </div>
         </div>
         <div className="relative mx-auto w-full max-w-2xl lg:max-w-none">
@@ -159,7 +146,7 @@ function HeroAppMockup() {
       <div className="grid min-h-[460px] grid-cols-[150px_minmax(0,1fr)] bg-[#FFFDF9] text-[#17151D]">
         <aside className="border-r border-[#E5DED4] bg-[#F3EEE7] p-4">
           <div className="mb-6 flex items-center gap-2"><BrandMark small /><strong>TriCord</strong></div>
-          {['Active Feed', 'Tasks', 'Knowledge', 'Files', 'Reports'].map((item, index) => <div key={item} className={cn('mb-2 rounded-lg px-3 py-2 text-xs font-black', index === 0 ? 'bg-[#FFEDD5] text-[#C2410C]' : 'text-[#6B6274]')}>{item}</div>)}
+          {['Active Feed', 'Tasks', 'Knowledge', 'Team'].map((item, index) => <div key={item} className={cn('mb-2 rounded-lg px-3 py-2 text-xs font-black', index === 0 ? 'bg-[#FFEDD5] text-[#C2410C]' : 'text-[#6B6274]')}>{item}</div>)}
         </aside>
         <main className="p-5">
           <div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8C8495]">Hub</p><h3 className="text-2xl font-black">Acme Studio</h3></div><button className="rounded-lg bg-[#17151D] px-3 py-2 text-xs font-black text-white">New post</button></div>
@@ -176,51 +163,13 @@ function MiniTask({ title, person }: { title: string; person: string }) {
   return <div className="rounded-xl border border-[#E5DED4] bg-white p-4"><p className="text-xs font-black text-[#C2410C]">In progress</p><h5 className="mt-2 font-black">{title}</h5><p className="mt-2 text-xs text-[#7A7183]">Assigned to {person}</p></div>;
 }
 
-function OutcomeStrip() {
-  const outcomes = [
-    ["Fewer missed follow-ups", "Turn scattered messages into clear posts with owners and next steps."],
-    ["Faster team handoffs", "Keep files, decisions, and task context together so work moves without repeated explanations."],
-    ["Cleaner operations", "Organize client work, SOPs, files, task ownership, and reports in one shared hub."],
-    ["Room to grow", "Start simple, then add structure as your team, clients, and processes expand."],
-  ];
-
-  return (
-    <section className="border-b border-[#E5DED4] bg-white py-10">
-      <div className="mx-auto grid max-w-7xl gap-3 px-4 sm:px-6 md:grid-cols-2 lg:grid-cols-4 lg:px-8">
-        {outcomes.map(([title, body]) => (
-          <article key={title} className="rounded-2xl border border-[#E5DED4] bg-[#FFFDF9] p-5 shadow-sm">
-            <p className="text-sm font-black text-[#17151D]">{title}</p>
-            <p className="mt-2 text-sm leading-6 text-[#635B6C]">{body}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function OperatingSection() {
-  return (
-    <MarketingSection eyebrow="Built for lean teams" title="Give every update a clear home, owner, and next step." body="Small teams move fast, but speed breaks down when client requests, internal tasks, SOPs, and people records live in different places. TriCord gives your team a simple operating rhythm without enterprise-level complexity.">
-      <div className="grid gap-4 md:grid-cols-3">
-        {benefits.map(({ icon: Icon, title, body }) => <article key={title} className="rounded-2xl border border-[#E5DED4] bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFEDD5] text-[#C2410C]"><Icon className="h-5 w-5" /></div><h3 className="mt-5 text-xl font-black">{title}</h3><p className="mt-3 leading-7 text-[#635B6C]">{body}</p></article>)}
-      </div>
-    </MarketingSection>
-  );
-}
-
-const benefits = [
-  { icon: MessageSquare, title: 'Client work stays organized', body: 'Keep every client request, update, file, and reply attached to the work it belongs to.' },
-  { icon: ClipboardList, title: 'Projects keep moving', body: 'Turn conversations into assigned tasks with priorities, due dates, and status your team can see.' },
-  { icon: BriefcaseBusiness, title: 'Operations feel manageable', body: 'See tasks, procedures, files, reports, and follow-through without rebuilding spreadsheets.' },
-];
-
 const features = [
-  { icon: MessageSquare, title: 'Discussions', body: 'Focused posts keep every decision, reply, file, and follow-up attached to the original work.', preview: 'discussion' },
-  { icon: LayoutGrid, title: 'Tasks', body: 'Board, list, and calendar views help your team move from conversation to completed work.', preview: 'tasks' },
-  { icon: FileText, title: 'Knowledge Base', body: 'SOPs, FAQs, guides, and repeatable processes become easy for the team to find and follow.', preview: 'knowledge' },
-  { icon: Clock3, title: 'Team', body: 'Turn on attendance, employee records, and payroll-preparation records only when your Hub needs them.', preview: 'workforce' },
-  { icon: ShieldCheck, title: 'Access Control', body: 'Owners, Admins, Members, and Guests see only what their role needs.', preview: 'security' },
-  { icon: Sparkles, title: 'Reports', body: 'See tasks, activity, room progress, and optional team records in one view.', preview: 'reports' },
+  { icon: MessageSquare, title: 'Feed and Rooms', body: 'Post updates in the right room and keep replies with the topic.', preview: 'discussion' },
+  { icon: LayoutGrid, title: 'Tasks', body: 'Use board, list, and calendar views to track ownership and due dates.', preview: 'tasks' },
+  { icon: FileText, title: 'Knowledge', body: 'Save SOPs, FAQs, guides, and repeatable steps for the team.', preview: 'knowledge' },
+  { icon: Clock3, title: 'Team', body: 'Enable attendance, employee records, and payroll-preparation records when needed.', preview: 'workforce' },
+  { icon: ShieldCheck, title: 'Roles and Guests', body: 'Owners manage rooms, invites, guest access, and admin permissions.', preview: 'security' },
+  { icon: Sparkles, title: 'Attendance Reports', body: 'Review optional attendance and team records when those tools are enabled.', preview: 'reports' },
 ] as const;
 
 function FeatureHighlights() {
@@ -228,8 +177,8 @@ function FeatureHighlights() {
     <section id="features" className="border-y border-[#E5DED4] bg-[#FFFDF9] py-20 sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-          <div className="max-w-3xl"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Feature highlights</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">Everything important stays connected to the work.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">TriCord blends the familiarity of team chat with the structure business owners need to run projects, shared knowledge, and repeatable processes.</p></div>
-          <div className="rounded-2xl border border-[#E5DED4] bg-white p-4 text-sm font-semibold text-[#635B6C] shadow-sm">Built for daily operations, not extra admin work.</div>
+          <div className="max-w-3xl"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">What is inside</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">The parts your team actually uses every day.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">A focused hub for updates, tasks, knowledge, team records, and access control.</p></div>
+          <div className="rounded-2xl border border-[#E5DED4] bg-white p-4 text-sm font-semibold text-[#635B6C] shadow-sm">Simple by default. Team tools are optional.</div>
         </div>
         <div className="mt-12 grid gap-5 lg:grid-cols-3">
           {features.map((feature) => <div key={feature.title}><FeatureCard icon={feature.icon} title={feature.title} body={feature.body} preview={feature.preview} /></div>)}
@@ -264,13 +213,13 @@ function ProductTour({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: M
   return (
     <section id="tour" className="bg-[#17151D] py-20 text-white sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#FDBA74]">Interactive product tour</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">From request to completed work without losing context.</h2><p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-white/70">Click through a simple workflow your team can use every day: capture the request, discuss the details, assign the work, track progress, and close the loop.</p></div>
+        <div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#FDBA74]">Product tour</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">From request to completed work.</h2><p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-white/70">Create a post, discuss the details, assign the task, and save the final note.</p></div>
         <div className="mt-12 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-3">{steps.map((item, index) => <button key={item.title} type="button" onClick={() => setStep(index)} className={cn('group w-full rounded-2xl border p-4 text-left transition', step === index ? 'border-[#F97316] bg-[#F97316] text-[#431407] shadow-xl shadow-[#F97316]/20' : 'border-white/10 bg-white/7 text-white hover:bg-white/10')}><div className="flex items-center gap-3"><span className={cn('grid h-9 w-9 place-items-center rounded-xl text-sm font-black', step === index ? 'bg-[#431407] text-[#FDBA74]' : 'bg-white/10 text-[#FDBA74]')}>{index + 1}</span><div><p className="font-black">{item.title}</p><p className={cn('mt-1 text-xs leading-5', step === index ? 'text-[#5B1B06]' : 'text-white/55')}>{item.body}</p></div></div></button>)}</div>
           <div className="relative overflow-hidden rounded-3xl border border-white/12 bg-white/8 p-4 shadow-2xl shadow-black/30">
             <MousePointer2 className="absolute left-[18%] top-[18%] z-20 h-7 w-7 rotate-[-14deg] animate-pulse text-[#FDBA74] drop-shadow" />
             <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#0C0B10] p-4 lg:grid-cols-[180px_minmax(0,1fr)]">
-              <aside className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><div className="mb-5 flex items-center gap-2"><BrandMark small /><strong>TriCord</strong></div>{['Active Feed','Tasks','Knowledge','Reports'].map((item, index) => <div key={item} className={cn('mb-2 rounded-lg px-3 py-2 text-xs font-black', index === active.nav ? 'bg-[#F97316] text-[#431407]' : 'text-white/50')}>{item}</div>)}</aside>
+              <aside className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><div className="mb-5 flex items-center gap-2"><BrandMark small /><strong>TriCord</strong></div>{['Active Feed','Tasks','Knowledge','Team'].map((item, index) => <div key={item} className={cn('mb-2 rounded-lg px-3 py-2 text-xs font-black', index === active.nav ? 'bg-[#F97316] text-[#431407]' : 'text-white/50')}>{item}</div>)}</aside>
               <div className="min-h-[430px] rounded-2xl border border-white/10 bg-white/[0.04] p-5"><div className="mb-5 flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Hub</p><h3 className="text-2xl font-black">{active.screenTitle}</h3></div><span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black">{active.action}</span></div><TourScreen step={step} /></div>
             </div>
           </div>
@@ -295,89 +244,29 @@ function TourScreen({ step }: { step: number }) {
   return <div className="space-y-4"><div className="rounded-2xl border border-[#F97316]/50 bg-[#17151D] p-5"><span className="rounded-full bg-[#DBEAFE] px-2 py-1 text-xs font-black text-[#2563EB]">Active</span><h4 className="mt-4 text-2xl font-black">Prepare client launch checklist</h4><p className="mt-3 leading-7 text-white/62">Alex opened the post, Jamie added the requirements, and Taylor attached the first checklist draft.</p></div>{step === 1 && <div className="ml-8 rounded-2xl border border-white/10 bg-white/[0.05] p-4"><strong>Jamie</strong><p className="mt-2 text-sm leading-6 text-white/62">I added the client requirements. Morgan can review the access section before Friday.</p></div>}</div>;
 }
 
-function ProductRhythm({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
-  return (
-    <section className="bg-[#F7F5F2] py-20 sm:py-24">
-      <div className="mx-auto max-w-7xl space-y-20 px-4 sm:px-6 lg:px-8">
-        <ProductBand eyebrow="Focused collaboration" title="A calmer feed for work that needs context." body="Every post has a purpose: make a decision, share an update, collect files, or move work forward. Replies stay attached to the topic so people do not have to search through noise." reverse={false}><FeedMockup /></ProductBand>
-        <ProductBand eyebrow="Project execution" title="Tasks inherit the context that created them." body="Turn discussion into clear ownership with board, list, and calendar views. Leaders can scan what is open, assigned, overdue, or completed without another status meeting." reverse><TaskMockup /></ProductBand>
-        <ProductBand eyebrow="Optional team tools" title="Add operational records only when your team needs them." body="Attendance tracking, employee records, and payroll-preparation records can be enabled by the Hub Owner when those workflows belong in TriCord. Core collaboration stays simple by default." reverse={false}><WorkforceMockup /></ProductBand>
-        <div className="text-center"><MarketingButton href={appUrl} onClick={onLaunch}>Start Trial <ArrowRight className="h-4 w-4" /></MarketingButton></div>
-      </div>
-    </section>
-  );
-}
-
-function ProductBand({ eyebrow, title, body, reverse, children }: { eyebrow: string; title: string; body: string; reverse?: boolean; children: ReactNode }) {
-  return <div className={cn('grid items-center gap-10 lg:grid-cols-2', reverse && 'lg:[&>*:first-child]:order-2')}><div>{children}</div><div><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">{eyebrow}</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">{title}</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">{body}</p><div className="mt-8 grid gap-3 text-sm font-semibold text-[#5F5668] sm:grid-cols-2"><p><Check className="mr-2 inline h-4 w-4 text-[#0D9488]" />Fast to understand</p><p><Check className="mr-2 inline h-4 w-4 text-[#0D9488]" />Built for repeated use</p></div></div></div>;
-}
-
-function FeedMockup() { return <MockupShell title="Active Feed"><div className="space-y-3">{['Weekly client update','Launch approvals','Support escalation'].map((item, index) => <div key={item} className="rounded-xl border border-[#E5DED4] bg-white p-4"><div className="flex gap-2"><span className="rounded-full bg-[#DBEAFE] px-2 py-1 text-[10px] font-black text-[#2563EB]">Active</span><span className="rounded-full bg-[#CCFBF1] px-2 py-1 text-[10px] font-black text-[#0F766E]">Room</span></div><h4 className="mt-3 font-black">{item}</h4><p className="mt-2 text-sm text-[#7A7183]">{index + 2} replies · {index + 1} task</p></div>)}</div></MockupShell>; }
-function TaskMockup() { return <MockupShell title="Tasks"><div className="grid gap-3 md:grid-cols-3">{['To do','In progress','Done'].map((item, index) => <div key={item} className="rounded-xl border border-[#E5DED4] bg-white p-3"><p className="text-xs font-black text-[#8C8495]">{item}</p><div className={cn('mt-4 rounded-lg p-3', index === 0 ? 'bg-[#FFEDD5]' : index === 1 ? 'bg-[#DBEAFE]' : 'bg-[#CCFBF1]')}><p className="text-sm font-black">{['Prepare packet','Review list','Send summary'][index]}</p><p className="mt-2 text-xs text-[#5F5668]">{['Sam','Jordan','Casey'][index]}</p></div></div>)}</div></MockupShell>; }
-function WorkforceMockup() { return <MockupShell title="Team"><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-[#E5DED4] bg-white p-4"><p className="text-xs font-black text-[#8C8495]">Attendance</p><div className="mt-4 h-3 rounded bg-[#F97316]" /><div className="mt-2 h-3 w-2/3 rounded bg-[#FDBA74]" /></div><div className="rounded-xl border border-[#E5DED4] bg-white p-4"><p className="text-xs font-black text-[#8C8495]">Leave Approvals</p><p className="mt-4 text-2xl font-black">4</p><p className="text-xs text-[#7A7183]">pending requests</p></div><div className="rounded-xl border border-[#E5DED4] bg-white p-4 sm:col-span-2"><p className="text-xs font-black text-[#8C8495]">Payroll Preparation</p><p className="mt-3 text-sm text-[#635B6C]">Payment methods, recurring items, and compensation notes stay organized per employee for owner review.</p></div></div></MockupShell>; }
-
-function MockupShell({ title, children }: { title: string; children: ReactNode }) {
-  return <div className="overflow-hidden rounded-3xl border border-[#E5DED4] bg-white p-4 shadow-2xl shadow-[#C2410C]/8"><div className="mb-4 flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-[#F97316]" /><span className="h-3 w-3 rounded-full bg-[#FDBA74]" /><span className="h-3 w-3 rounded-full bg-[#0D9488]" /><span className="ml-auto text-sm font-black">{title}</span></div><div className="rounded-2xl bg-[#F7F5F2] p-4">{children}</div></div>;
-}
-
-function WorkflowTimeline() {
-  const steps = [
-    { icon: MessageSquare, title: 'Collect the request', body: 'Start with a focused post that captures the outcome, context, and room.' },
-    { icon: Users2, title: 'Discuss with the right people', body: 'Keep replies, files, and decisions attached to the work instead of scattered.' },
-    { icon: ClipboardList, title: 'Assign the next step', body: 'Give every action a person, priority, and date so ownership is visible.' },
-    { icon: CheckCircle2, title: 'Close the loop', body: 'Archive the work, save the process, and report what changed.' },
-  ];
-  return <section id="workflow" className="border-y border-[#E5DED4] bg-white py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Workflow</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">A clear operating rhythm for every team.</h2></div><div className="relative mt-12 grid gap-5 lg:grid-cols-4"><div className="absolute left-0 right-0 top-10 hidden h-px bg-[#E5DED4] lg:block" />{steps.map(({ icon: Icon, title, body }, index) => <article key={title} className="relative rounded-2xl border border-[#E5DED4] bg-[#FFFDF9] p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#17151D] text-[#FDBA74]"><Icon className="h-6 w-6" /></div><p className="mt-6 text-xs font-black uppercase tracking-[0.16em] text-[#C2410C]">Step {index + 1}</p><h3 className="mt-2 text-xl font-black">{title}</h3><p className="mt-3 text-sm leading-6 text-[#635B6C]">{body}</p></article>)}</div></div></section>;
-}
-
-function ComparisonSection() {
-  const scattered = ['Chat', 'Tasks', 'Docs', 'Spreadsheets', 'Email threads'];
-  const connected = ['Focused discussions', 'Project tasks', 'Knowledge base', 'Shared files', 'Reports'];
-  return <section className="bg-[#F7F5F2] py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Comparison</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">Replace scattered tools with one connected workspace.</h2></div><div className="mt-12 grid gap-5 lg:grid-cols-2"><ComparisonCard title="Traditional workflow" muted items={scattered} /><ComparisonCard title="TriCord" items={connected} /></div></div></section>;
-}
-
-function ComparisonCard({ title, items, muted = false }: { title: string; items: string[]; muted?: boolean }) {
-  return <article className={cn('rounded-3xl border p-6 shadow-sm', muted ? 'border-[#E5DED4] bg-white' : 'border-[#F97316] bg-[#17151D] text-white shadow-2xl shadow-[#C2410C]/16')}><h3 className="text-2xl font-black">{title}</h3><div className="mt-6 grid gap-3">{items.map((item, index) => <div key={item} className={cn('flex items-center gap-3 rounded-xl border p-4', muted ? 'border-[#E5DED4] bg-[#F7F5F2] text-[#635B6C]' : 'border-white/10 bg-white/8 text-white/78')}><span className={cn('grid h-8 w-8 place-items-center rounded-lg text-xs font-black', muted ? 'bg-[#E5DED4]' : 'bg-[#F97316] text-[#431407]')}>{muted ? index + 1 : <Check className="h-4 w-4" />}</span><span className="font-bold">{item}</span></div>)}</div></article>;
-}
-
-function UseCases() {
-  const useCases = [['Individuals', 'Capture client requests, personal projects, repeatable processes, and daily work in a calmer place than chat.'], ['Teams', 'Coordinate projects, support work, sales follow-ups, onboarding, and internal operations without scattering context.'], ['Organizations', 'Give leaders visibility across rooms, tasks, procedures, and optional team tools as the team grows.']];
-  return <MarketingSection eyebrow="Use cases" title="One hub, many ways to run the day." body="TriCord is flexible enough for solo operators and structured enough for teams that need visibility across work and people operations."><div className="grid gap-4 md:grid-cols-3">{useCases.map(([title, body]) => <div key={title} className="rounded-2xl border border-[#E5DED4] bg-white p-6 shadow-sm"><h3 className="text-xl font-black">{title}</h3><p className="mt-3 leading-7 text-[#635B6C]">{body}</p></div>)}</div></MarketingSection>;
-}
-
-function Testimonials() {
-  const proofs = [['Less status chasing', 'Keep updates, files, decisions, and next steps attached to the original post.'], ['Clearer accountability', 'Assign owners and due dates from the same place where the work is discussed.'], ['Safer access boundaries', 'Owners can separate internal work, client Rooms, and team records by role.']];
-  return <section className="border-y border-[#E5DED4] bg-white py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="max-w-3xl"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Built for operations</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">Practical structure for teams that move fast.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">TriCord avoids fake customer claims and focuses on the product outcomes small businesses can evaluate for themselves.</p></div><div className="mt-10 grid gap-4 lg:grid-cols-3">{proofs.map(([title, body]) => <article key={title} className="rounded-2xl border border-[#E5DED4] bg-[#FFFDF9] p-6 shadow-sm"><h3 className="text-xl font-black text-[#17151D]">{title}</h3><p className="mt-4 leading-7 text-[#3D3744]">{body}</p></article>)}</div></div></section>;
-}
-
 function Pricing({ appUrl, onLaunch, onContact }: { appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void; onContact: () => void }) {
   const included = [
     'Up to 25 employees',
-    '25 mailboxes; shared mailboxes are not included',
     '25 GB of Hub storage',
     'Unlimited rooms and messages',
-    'Unlimited tasks, CRM, recruitment, knowledge base, and attendance',
+    'Tasks, knowledge base, and optional Team tools',
+    'Owner-managed roles, guests, and permissions',
     '30-day free trial before the paid subscription starts',
   ];
-  return <section id="pricing" className="bg-[#F7F5F2] py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Pricing</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">One Standard Hub for growing teams.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">Start with a full-featured trial, then keep your Hub running with a simple flat subscription for teams up to 25 employees.</p></div><div className="mx-auto mt-12 grid max-w-5xl gap-5 lg:grid-cols-[1.1fr_0.9fr]"><article className="rounded-3xl border border-[#F97316] bg-[#17151D] p-7 text-white shadow-xl shadow-[#C2410C]/14"><p className="text-sm font-black uppercase tracking-[0.16em] text-[#FDBA74]">Standard Hub</p><div className="mt-5 flex flex-wrap items-end gap-3"><strong className="text-5xl font-black">$29</strong><span className="pb-2 text-white/65">per month</span></div><p className="mt-2 text-sm font-semibold text-[#FDBA74]">or $290 yearly, with 2 months free</p><p className="mt-4 max-w-2xl text-sm leading-6 text-white/70">Everything your SME or startup team needs to organize discussions, projects, procedures, email context, and optional team records in one connected Hub.</p><a href={appUrl} onClick={onLaunch} className="mt-7 inline-flex h-12 w-full items-center justify-center rounded-lg bg-[#F97316] px-5 text-sm font-black text-[#431407] transition hover:-translate-y-0.5 hover:bg-[#FDBA74] sm:w-auto">Start Trial <ArrowRight className="ml-2 h-4 w-4" /></a><ul className="mt-7 grid gap-3 text-sm sm:grid-cols-2">{included.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#FDBA74]" /> <span className="text-white/78">{item}</span></li>)}</ul></article><aside className="rounded-3xl border border-[#E5DED4] bg-white p-7 shadow-sm"><h3 className="text-2xl font-black">Need more than 25 employees?</h3><div className="mt-6 space-y-4 text-sm leading-6 text-[#635B6C]"><p><strong className="text-[#17151D]">Contact us for a custom plan.</strong> Larger teams may need higher employee capacity, more storage, implementation support, or a custom operating setup.</p><p><strong className="text-[#17151D]">Simple billing.</strong> Owners manage subscriptions, invoices, payment methods, promo codes, and cancellation through Stripe Checkout or the billing portal.</p><p><strong className="text-[#17151D]">No surprise public tiers.</strong> We keep the public plan simple and discuss larger requirements directly.</p></div><button type="button" onClick={onContact} className="mt-7 inline-flex h-11 w-full items-center justify-center rounded-lg border border-[#E5DED4] px-4 text-sm font-black text-[#17151D] transition hover:-translate-y-0.5 hover:border-[#F97316]">Contact Us</button></aside></div><p className="mx-auto mt-6 max-w-3xl text-center text-sm leading-6 text-[#635B6C]">Prices, taxes, renewal terms, and plan details are confirmed at checkout. TriCord does not store payment card numbers.</p></div></section>;
+  return <section id="pricing" className="bg-[#F7F5F2] py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="mx-auto max-w-3xl text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Pricing</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">One simple Hub plan.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">Start with a trial, then keep TriCord running for teams up to 25 employees.</p></div><div className="mx-auto mt-12 grid max-w-5xl gap-5 lg:grid-cols-[1.1fr_0.9fr]"><article className="rounded-3xl border border-[#F97316] bg-[#17151D] p-7 text-white shadow-xl shadow-[#C2410C]/14"><p className="text-sm font-black uppercase tracking-[0.16em] text-[#FDBA74]">Standard Hub</p><div className="mt-5 flex flex-wrap items-end gap-3"><strong className="text-5xl font-black">$29</strong><span className="pb-2 text-white/65">per month</span></div><p className="mt-2 text-sm font-semibold text-[#FDBA74]">or $290 yearly</p><p className="mt-4 max-w-2xl text-sm leading-6 text-white/70">Feed, Rooms, Tasks, Knowledge, Admin controls, and optional Team recordkeeping in one Hub.</p><a href={appUrl} onClick={onLaunch} className="mt-7 inline-flex h-12 w-full items-center justify-center rounded-lg bg-[#F97316] px-5 text-sm font-black text-[#431407] transition hover:-translate-y-0.5 hover:bg-[#FDBA74] sm:w-auto">Start Trial <ArrowRight className="ml-2 h-4 w-4" /></a><ul className="mt-7 grid gap-3 text-sm sm:grid-cols-2">{included.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#FDBA74]" /> <span className="text-white/78">{item}</span></li>)}</ul></article><aside className="rounded-3xl border border-[#E5DED4] bg-white p-7 shadow-sm"><h3 className="text-2xl font-black">Need more capacity?</h3><div className="mt-6 space-y-4 text-sm leading-6 text-[#635B6C]"><p><strong className="text-[#17151D]">Contact us.</strong> Larger teams may need higher employee capacity, more storage, or onboarding help.</p><p><strong className="text-[#17151D]">Simple billing.</strong> Owners manage subscription details through Stripe Checkout or the billing portal.</p></div><button type="button" onClick={onContact} className="mt-7 inline-flex h-11 w-full items-center justify-center rounded-lg border border-[#E5DED4] px-4 text-sm font-black text-[#17151D] transition hover:-translate-y-0.5 hover:border-[#F97316]">Contact Us</button></aside></div><p className="mx-auto mt-6 max-w-3xl text-center text-sm leading-6 text-[#635B6C]">Prices, taxes, renewal terms, and plan details are confirmed at checkout. TriCord does not store payment card numbers.</p></div></section>;
 }
 
 function Security() {
-  return <section id="security" className="border-y border-[#E5DED4] bg-white py-20 sm:py-24"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8"><div><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Trust</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">Security and privacy in plain business language.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">TriCord is designed so people only see what they need. Sensitive team and team information stays protected with clear roles, guest boundaries, and activity visibility for authorized leaders.</p></div><div className="grid gap-4 sm:grid-cols-2">{[['Secure sign-in', 'Every user signs in with their own account.'], ['Private profile details', 'Sensitive contact and employee details stay separate from public profile information.'], ['Guest boundaries', 'External collaborators only see Rooms and content shared with them.'], ['Activity history', 'Important business changes can be reviewed by authorized leaders.']].map(([title, body]) => <div key={title} className="rounded-2xl border border-[#E5DED4] bg-[#FFFDF9] p-5"><KeyRound className="h-5 w-5 text-[#C2410C]" /><h3 className="mt-4 font-black">{title}</h3><p className="mt-2 text-sm leading-6 text-[#635B6C]">{body}</p></div>)}</div></div></section>;
-}
-
-function FAQ() {
-  const faqs = [['What is TriCord?', 'TriCord is a work hub for SMEs and startups that combines focused discussions, Rooms, tasks, SOPs, files, reports, and admin controls in one product.'], ['How is TriCord different from chat apps?', 'TriCord keeps work organized around posts instead of endless channels. Each post keeps the conversation, files, decisions, tasks, and context together.'], ['Can I use TriCord with clients or guests?', 'Yes. Guests can be invited into specific Rooms so external collaborators only see the work meant for them.'], ['Can TriCord support business recordkeeping?', 'Yes. Optional team tools can help organize attendance tracking, employee records, and payroll preparation. TriCord is not a payroll processor, tax advisor, legal advisor, HR consulting service, PEO, or employer of record.'], ['Can I store medical or patient information?', 'No. TriCord is not designed for protected health information and does not support HIPAA-regulated workflows in this release.'], ['Where do users sign in?', 'Use the Start Trial button to open the app. Owners, Admins, Members, and Guests all sign in from the same product entry point.']];
-  return <section id="faq" className="bg-[#FFFDF9] py-20 sm:py-24"><div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"><div className="text-center"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">FAQ</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">Questions before you start?</h2></div><div className="mt-10 divide-y divide-[#E5DED4] rounded-2xl border border-[#E5DED4] bg-white shadow-sm">{faqs.map(([question, answer]) => <details key={question} className="group p-6"><summary className="cursor-pointer list-none text-lg font-black marker:hidden">{question}</summary><p className="mt-3 leading-7 text-[#635B6C]">{answer}</p></details>)}</div></div></section>;
+  return <section id="security" className="border-y border-[#E5DED4] bg-white py-20 sm:py-24"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8"><div><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">Trust</p><h2 className="mt-4 text-4xl font-black tracking-normal sm:text-5xl">Clear access for every role.</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">Owners control rooms, invites, guest access, and delegated admin permissions.</p></div><div className="grid gap-4 sm:grid-cols-2">{[['Secure sign-in', 'Every user signs in with their own account.'], ['Private profile details', 'Sensitive profile details stay separate from public profile information.'], ['Guest boundaries', 'Guests only see Rooms shared with them.'], ['Activity history', 'Authorized leaders can review important Hub changes.']].map(([title, body]) => <div key={title} className="rounded-2xl border border-[#E5DED4] bg-[#FFFDF9] p-5"><KeyRound className="h-5 w-5 text-[#C2410C]" /><h3 className="mt-4 font-black">{title}</h3><p className="mt-2 text-sm leading-6 text-[#635B6C]">{body}</p></div>)}</div></div></section>;
 }
 
 function FinalCTA({ appUrl, onLaunch }: { appUrl: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void }) {
-  return <section className="bg-[#F97316] py-16 text-[#431407]"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 sm:px-6 lg:flex-row lg:items-center lg:px-8"><div><h2 className="text-3xl font-black tracking-normal sm:text-4xl">Give your team one place to work from.</h2><p className="mt-3 max-w-2xl text-lg leading-8 text-[#5B1B06]">Start a Hub, invite your team, and see how much smoother work feels when the conversation and execution stay connected.</p></div><a href={appUrl} onClick={onLaunch} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-5 text-sm font-bold text-white shadow-lg shadow-[#431407]/18 transition hover:-translate-y-0.5">Start Trial <ArrowRight className="h-4 w-4" /></a></div></section>;
+  return <section className="bg-[#F97316] py-16 text-[#431407]"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 sm:px-6 lg:flex-row lg:items-center lg:px-8"><div><h2 className="text-3xl font-black tracking-normal sm:text-4xl">Start a clearer Hub.</h2><p className="mt-3 max-w-2xl text-lg leading-8 text-[#5B1B06]">Create a Hub, invite your team, and keep daily work easier to follow.</p></div><a href={appUrl} onClick={onLaunch} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-5 text-sm font-bold text-white shadow-lg shadow-[#431407]/18 transition hover:-translate-y-0.5">Start Trial <ArrowRight className="h-4 w-4" /></a></div></section>;
 }
 
 function MarketingFooter({ appUrl, marketingBasePath, onLaunch, onContact }: { appUrl: string; marketingBasePath: string; onLaunch: (event: MouseEvent<HTMLAnchorElement>) => void; onContact: () => void }) {
   const legalHref = (page: keyof typeof legalContent) => joinMarketingPath(marketingBasePath, page);
-  return <footer className="bg-[#17151D] py-12 text-white"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 md:grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] lg:px-8"><div><div className="flex items-center gap-3"><BrandMark /><span className="text-xl font-black">TriCord</span></div><p className="mt-4 max-w-sm text-sm leading-6 text-white/62">A modern work hub for conversations, projects, SOPs, files, and everyday business operations.</p><button type="button" onClick={onContact} className="mt-4 inline-flex h-10 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-black text-[#431407] transition hover:-translate-y-0.5 hover:bg-[#FDBA74]">Contact Us</button></div><FooterColumn title="Product" links={[["Features", joinMarketingPath(marketingBasePath, '#features')], ['Tour', joinMarketingPath(marketingBasePath, '#tour')], ['Pricing', joinMarketingPath(marketingBasePath, '#pricing')], ['Get started', appUrl]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Resources" links={[["Workflow", joinMarketingPath(marketingBasePath, '#workflow')], ['Security', joinMarketingPath(marketingBasePath, '#security')], ['FAQ', joinMarketingPath(marketingBasePath, '#faq')], ['Help center', joinMarketingPath(marketingBasePath, '#faq')]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Legal" links={[["Privacy", legalHref('privacy')], ['Terms', legalHref('terms')], ['Acceptable Use', legalHref('acceptable-use')], ['Refund Policy', legalHref('refund')], ['Subprocessors', legalHref('subprocessors')], ['Security', legalHref('security')], ['Accessibility', legalHref('accessibility')]]} onLaunch={onLaunch} appUrl={appUrl} /></div><div className="mx-auto mt-10 flex max-w-7xl flex-col gap-3 border-t border-white/10 px-4 pt-6 text-xs text-white/50 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8"><p>© {new Date().getFullYear()} TriCord. All rights reserved.</p><p>TriCord helps organize business operations. Optional team tools are recordkeeping tools and do not replace regulated systems or professional advice.</p></div></footer>;
+  return <footer className="bg-[#17151D] py-12 text-white"><div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 md:grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] lg:px-8"><div><div className="flex items-center gap-3"><BrandMark /><span className="text-xl font-black">TriCord</span></div><p className="mt-4 max-w-sm text-sm leading-6 text-white/62">A simple hub for Feed, Rooms, Tasks, Knowledge, and optional Team tools.</p><button type="button" onClick={onContact} className="mt-4 inline-flex h-10 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-black text-[#431407] transition hover:-translate-y-0.5 hover:bg-[#FDBA74]">Contact Us</button></div><FooterColumn title="Product" links={[["Features", joinMarketingPath(marketingBasePath, '#features')], ['Tour', joinMarketingPath(marketingBasePath, '#tour')], ['Pricing', joinMarketingPath(marketingBasePath, '#pricing')], ['Get started', appUrl]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Resources" links={[['Security', joinMarketingPath(marketingBasePath, '#security')]]} onLaunch={onLaunch} appUrl={appUrl} /><FooterColumn title="Legal" links={[["Privacy", legalHref('privacy')], ['Terms', legalHref('terms')], ['Acceptable Use', legalHref('acceptable-use')], ['Refund Policy', legalHref('refund')], ['Subprocessors', legalHref('subprocessors')], ['Security', legalHref('security')], ['Accessibility', legalHref('accessibility')]]} onLaunch={onLaunch} appUrl={appUrl} /></div><div className="mx-auto mt-10 flex max-w-7xl flex-col gap-3 border-t border-white/10 px-4 pt-6 text-xs text-white/50 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8"><p>© {new Date().getFullYear()} TriCord. All rights reserved.</p><p>Optional Team tools are recordkeeping tools and do not replace professional advice.</p></div></footer>;
 }
 
 function ContactUsModal({ onClose }: { onClose: () => void }) {
@@ -391,15 +280,11 @@ function ContactUsModal({ onClose }: { onClose: () => void }) {
     window.location.href = 'mailto:hello@tricord.cc?subject=TriCord%20contact%20request&body=' + body;
     onClose();
   };
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 py-8" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form onSubmit={submit} className="w-full max-w-2xl rounded-3xl border border-[#E5DED4] bg-white p-6 text-[#17151D] shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-black uppercase tracking-[0.18em] text-[#C2410C]">Contact</p><h2 id="contact-title" className="mt-2 text-2xl font-black">Tell us what you need</h2><p className="mt-2 text-sm leading-6 text-[#635B6C]">Use this form for custom plans, onboarding questions, or sales help.</p></div><button type="button" onClick={onClose} aria-label="Close contact form" className="grid h-10 w-10 place-items-center rounded-lg border border-[#E5DED4] text-xl">×</button></div><div className="mt-6 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Full Name*<input required value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold">Email Address*<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold sm:col-span-2">Contact Number<input value={contactNumber} onChange={(event) => setContactNumber(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold sm:col-span-2">Message*<textarea required value={message} onChange={(event) => setMessage(event.target.value)} className="mt-2 min-h-32 w-full rounded-lg border border-[#E5DED4] p-3 outline-none focus:border-[#F97316]" /></label></div><div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" onClick={onClose} className="h-11 rounded-lg border border-[#E5DED4] px-5 text-sm font-bold">Cancel</button><button type="submit" className="h-11 rounded-lg bg-[#F97316] px-5 text-sm font-black text-[#431407]">Submit</button></div></form></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 py-8" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form onSubmit={submit} className="w-full max-w-2xl rounded-3xl border border-[#E5DED4] bg-white p-6 text-[#17151D] shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-black uppercase tracking-[0.18em] text-[#C2410C]">Contact</p><h2 id="contact-title" className="mt-2 text-2xl font-black">Tell us what you need</h2><p className="mt-2 text-sm leading-6 text-[#635B6C]">Use this for plan, setup, or product questions.</p></div><button type="button" onClick={onClose} aria-label="Close contact form" className="grid h-10 w-10 place-items-center rounded-lg border border-[#E5DED4] text-xl">×</button></div><div className="mt-6 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Full Name*<input required value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold">Email Address*<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold sm:col-span-2">Contact Number<input value={contactNumber} onChange={(event) => setContactNumber(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-[#E5DED4] px-3 outline-none focus:border-[#F97316]" /></label><label className="block text-sm font-bold sm:col-span-2">Message*<textarea required value={message} onChange={(event) => setMessage(event.target.value)} className="mt-2 min-h-32 w-full rounded-lg border border-[#E5DED4] p-3 outline-none focus:border-[#F97316]" /></label></div><div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" onClick={onClose} className="h-11 rounded-lg border border-[#E5DED4] px-5 text-sm font-bold">Cancel</button><button type="submit" className="h-11 rounded-lg bg-[#F97316] px-5 text-sm font-black text-[#431407]">Submit</button></div></form></div>;
 }
 
 function MarketingButton({ href, onClick, children }: { href: string; onClick: (event: MouseEvent<HTMLAnchorElement>) => void; children: ReactNode }) {
   return <a href={href} onClick={onClick} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#F97316] px-5 text-sm font-black text-[#431407] shadow-lg shadow-[#C2410C]/24 transition hover:-translate-y-0.5 hover:bg-[#FDBA74]">{children}</a>;
-}
-
-function MarketingSection({ id, eyebrow, title, body, children }: { id?: string; eyebrow: string; title: string; body: string; children: ReactNode }) {
-  return <section id={id} className="bg-[#F7F5F2] py-20 sm:py-24"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="mb-10 max-w-3xl"><p className="text-sm font-black uppercase tracking-[0.22em] text-[#C2410C]">{eyebrow}</p><h2 className="mt-4 text-4xl font-black leading-tight tracking-normal sm:text-5xl">{title}</h2><p className="mt-5 text-lg leading-8 text-[#635B6C]">{body}</p></div>{children}</div></section>;
 }
 
 function AvatarDot({ initial }: { initial: string }) {

@@ -175,8 +175,8 @@ const launchPlans: Array<{
     name: 'Standard Hub',
     monthly: '$29/month',
     annual: '$290/year',
-    description: 'One complete Hub for teams up to 25 employees, with collaboration, rooms, tasks, CRM, recruitment, knowledge, attendance, storage, and mailbox capacity included.',
-    highlights: ['Up to 25 employees', '25 mailboxes; shared mailboxes are not included', '25 GB Hub storage', 'Unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance', 'Contact us for teams with more than 25 employees'],
+    description: 'One complete Hub for teams up to 25 employees, with Feed, Rooms, Tasks, Knowledge, Admin controls, optional Team tools, and Hub storage included.',
+    highlights: ['Up to 25 employees', '25 GB Hub storage', 'Unlimited rooms and messages', 'Tasks, knowledge base, and optional Team tools', 'Contact us for teams with more than 25 employees'],
   },
 ];
 
@@ -1387,14 +1387,15 @@ export default function App() {
       setReactions([]);
       return;
     }
+    const db = supabase;
 
     const [commentResult, attachmentResult] = await Promise.all([
-      supabase
+      db
         .from('comments')
         .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
         .eq('post_id', postId)
         .order('created_at', { ascending: true }),
-      supabase
+      db
         .from('attachments')
         .select('id, workspace_id, post_id, comment_id, uploaded_by, bucket, object_path, filename, mime_type, byte_size, metadata, created_at')
         .eq('post_id', postId)
@@ -1412,7 +1413,7 @@ export default function App() {
     const reactionFilter = commentIds.length > 0
       ? `post_id.eq.${postId},comment_id.in.(${commentIds.join(',')})`
       : `post_id.eq.${postId}`;
-    const reactionResult = await supabase
+    const reactionResult = await db
       .from('reactions')
       .select('id, workspace_id, post_id, comment_id, user_id, emoji, created_at')
       .or(reactionFilter)
@@ -1427,7 +1428,7 @@ export default function App() {
       ((attachmentResult.data ?? []) as AppAttachment[]).map(async (attachment) => {
         const externalUrl = getExternalAttachmentUrl(attachment);
         if (externalUrl) return { ...attachment, signed_url: externalUrl };
-        const { data } = await supabase.storage.from(attachment.bucket).createSignedUrl(attachment.object_path, 3600);
+        const { data } = await db.storage.from(attachment.bucket).createSignedUrl(attachment.object_path, 3600);
         return { ...attachment, signed_url: data?.signedUrl };
       }),
     );
@@ -1450,13 +1451,14 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.access_token) return;
+    const db = supabase;
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
 
     void (async () => {
-      await supabase.realtime.setAuth(session.access_token);
+      await db.realtime.setAuth(session.access_token);
       if (cancelled) return;
-      channel = supabase
+      channel = db
       .channel(`workspace-${workspaceId}`, { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'comments_changed' }, ({ payload }) => {
         const activePostId = selectedPostIdRef.current;
@@ -1550,18 +1552,19 @@ export default function App() {
     return () => {
       cancelled = true;
       if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
-      if (channel) void supabase.removeChannel(channel);
+      if (channel) void db.removeChannel(channel);
     };
   }, [alertUnreadActivity, chatOpen, loadComments, loadWorkspaceData, session?.access_token, session?.user.id, view, workspaceId]);
 
   useEffect(() => {
     if (!supabase || !workspaceId || !session?.user.id) return;
+    const db = supabase;
     let checking = false;
     const reconcileMessages = async () => {
       const activePostId = selectedPostIdRef.current;
       if (!activePostId || checking || document.visibilityState !== 'visible') return;
       checking = true;
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('comments')
         .select('id, updated_at')
         .eq('post_id', activePostId)
@@ -1936,7 +1939,7 @@ export default function App() {
                   onNotice={setNotice}
                 />
               )}
-              {view === 'admin' && canManageAdmin && (
+              {view === 'admin' && canManageAdmin && currentRole && (
                 <AdminView
                   workspace={selectedWorkspace}
                   currentRole={currentRole}
@@ -1998,11 +2001,13 @@ export default function App() {
               onOpenEmailSettings={() => setAccountModal('email')}
               onReply={async (body, files, externalAttachments, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
+                if (!supabase) throw new Error('Supabase is not configured.');
+                const db = supabase;
                 const emailCommand = parseEmailSendCommand(body);
                 let commentBody = body;
                 if (emailCommand) {
                   if (!selectedEmailAccount) throw new Error('Connect Gmail or Microsoft 365 in Settings before sending email from a discussion.');
-                  const { error } = await supabase.functions.invoke('send-room-email', {
+                  const { error } = await db.functions.invoke('send-room-email', {
                     body: { workspaceId, postId: selectedPost.id, providerAccountId: selectedEmailAccount.id, to: emailCommand.to, cc: emailCommand.cc, bcc: emailCommand.bcc, body: emailCommand.message, subject: emailCommand.subject || `Re: ${selectedPost.title}` },
                   });
                   if (error) throw new Error(await getFunctionErrorMessage(error));
@@ -4450,20 +4455,7 @@ function AdminView({
     else setCapabilityRows((current) => ({
       ...current,
       [targetUserId]: {
-        workspace_id: workspace.id,
-        user_id: targetUserId,
-        manage_members: false,
-        manage_rooms: false,
-        manage_knowledge: false,
-        manage_hr: false,
-        approve_leave: false,
-        manage_timekeeping: false,
-        correct_attendance: false,
-        manage_payroll: false,
-        approve_payroll: false,
-        view_reports: false,
-        view_audit: false,
-        ...current[targetUserId],
+        ...(current[targetUserId] ?? defaultWorkspaceCapabilities(workspace.id, targetUserId)),
         [key]: enabled,
       },
     }));
@@ -5153,7 +5145,7 @@ Please tell us about your team size and custom plan needs.`);
         <section className={cn('rounded-xl border p-5', surface(theme))}>
           <p className="text-lg font-bold">Standard Hub</p>
           <p className={cn('mt-2 text-sm leading-6', muted(theme))}>
-            One flat subscription for a complete TriCord Hub. The Standard Hub includes up to {STANDARD_HUB_EMPLOYEE_LIMIT} employees, 25 mailboxes, 25 GB of storage, and unlimited rooms, messages, tasks, CRM, recruitment, knowledge base, and attendance. Shared mailboxes are not included.
+            One flat subscription for a complete TriCord Hub. The Standard Hub includes up to {STANDARD_HUB_EMPLOYEE_LIMIT} employees, 25 GB of storage, unlimited rooms and messages, tasks, knowledge base, Admin controls, and optional Team tools.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             {launchPlans[0].highlights.map((item) => (
@@ -6424,11 +6416,12 @@ async function updatePost(postId: string, input: { title: string; body: string; 
 
 async function deletePost(postId: string) {
   if (!supabase) return;
-  const { data: attachmentRows } = await supabase
+  const db = supabase;
+  const { data: attachmentRows } = await db
     .from('attachments')
     .select('bucket, object_path')
     .eq('post_id', postId);
-  const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id').maybeSingle();
+  const { data, error } = await db.from('posts').delete().eq('id', postId).select('id').maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('The post was not deleted. Apply the latest Supabase migration and confirm your account is the author, Owner, or admin.');
   const pathsByBucket = new Map<string, string[]>();
@@ -6436,7 +6429,7 @@ async function deletePost(postId: string) {
     if (attachment.bucket === 'external') return;
     pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
   });
-  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => db.storage.from(bucket).remove(paths)));
 }
 
 async function assignPost(postId: string, assigneeId: string) {
@@ -6565,8 +6558,9 @@ async function updateComment(commentId: string, body: string) {
 
 async function deleteComment(commentId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { data: attachmentRows } = await supabase.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
-  const { data, error } = await supabase.from('comments').delete().eq('id', commentId).select('id').maybeSingle();
+  const db = supabase;
+  const { data: attachmentRows } = await db.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
+  const { data, error } = await db.from('comments').delete().eq('id', commentId).select('id').maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('This message could not be deleted.');
   const pathsByBucket = new Map<string, string[]>();
@@ -6574,7 +6568,7 @@ async function deleteComment(commentId: string) {
     if (attachment.bucket === 'external') return;
     pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
   });
-  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => db.storage.from(bucket).remove(paths)));
 }
 
 async function uploadCommentAttachment(post: AppPost, commentId: string, userId: string, file: File) {
@@ -7349,6 +7343,24 @@ function formatSubscriptionStatusLabel(workspace?: AppWorkspace | null) {
   if (state.status === 'expired') return 'Trial expired';
   if (state.status === 'cancelled') return 'Subscription cancelled';
   return state.daysRemaining == null ? 'Free trial' : `${state.daysRemaining} day${state.daysRemaining === 1 ? '' : 's'} left in trial`;
+}
+
+function defaultWorkspaceCapabilities(workspaceId: string, userId: string): WorkspaceCapabilities {
+  return {
+    workspace_id: workspaceId,
+    user_id: userId,
+    manage_members: false,
+    manage_rooms: false,
+    manage_knowledge: false,
+    manage_hr: false,
+    approve_leave: false,
+    manage_timekeeping: false,
+    correct_attendance: false,
+    manage_payroll: false,
+    approve_payroll: false,
+    view_reports: false,
+    view_audit: false,
+  };
 }
 
 function getRoleLabel(role: WorkspaceRole) {

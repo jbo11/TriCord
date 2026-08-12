@@ -1959,6 +1959,19 @@ export default function App() {
                     await updateMemberRole(membershipId, role);
                     await loadWorkspaceData(workspaceId, true);
                   }}
+                  onRemoveMember={(membership) => {
+                    const member = profiles[membership.user_id];
+                    const memberName = getProfileFullName(member, 'Hub member');
+                    openConfirmDialog({
+                      title: `Remove ${memberName}?`,
+                      body: `This will remove ${memberName} from ${selectedWorkspace?.name ?? 'this Hub'} and revoke their Hub access. Existing posts, tasks, and records stay in the Hub history.`,
+                      confirmLabel: 'Remove access',
+                      onConfirm: async () => {
+                        await removeWorkspaceMember(membership.id);
+                        await loadWorkspaceData(workspaceId, true);
+                      },
+                    });
+                  }}
                 />
               )}
             </section>
@@ -4472,6 +4485,7 @@ function AdminView({
   businessModules,
   onInvite,
   onRoleChange,
+  onRemoveMember,
 }: {
   workspace?: AppWorkspace;
   currentRole: WorkspaceRole;
@@ -4483,6 +4497,7 @@ function AdminView({
   businessModules: BusinessModules;
   onInvite: (email: string, role: WorkspaceRole) => Promise<string>;
   onRoleChange: (membershipId: string, role: WorkspaceRole) => Promise<void>;
+  onRemoveMember: (membership: AppMembership) => void;
 }) {
   const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false);
   const [roleError, setRoleError] = useState('');
@@ -4612,6 +4627,8 @@ function AdminView({
                     {groupMemberships.map((membership) => {
                       const member = profiles[membership.user_id];
                       const memberName = getProfileFullName(member, 'Hub member');
+                      const canRemoveMember = currentRole === 'owner' && membership.role !== 'owner';
+                      const removeLabel = membership.role === 'guest' ? 'Remove guest' : 'Remove team member';
                       return (
                         <div key={membership.id} className={cn('rounded-lg border p-3', theme === 'dark' ? 'border-white/10 bg-white/[0.03]' : 'border-[#E7E3EA] bg-white/70')}>
                           <div className="flex items-center gap-3">
@@ -4620,22 +4637,35 @@ function AdminView({
                               <p className="truncate text-sm font-bold">{memberName}</p>
                               <p className={cn('text-xs', muted(theme))}>{getRoleLabel(membership.role)}</p>
                             </div>
-                            <select
-                              value={membership.role}
-                              disabled={membership.role === 'owner' || !canManagePeople}
-                              aria-label={`Role for ${memberName}`}
-                              onChange={async (event) => {
-                                setRoleError('');
-                                try { await onRoleChange(membership.id, event.target.value as WorkspaceRole); }
-                                catch (caughtError) { setRoleError(getErrorMessage(caughtError)); }
-                              }}
-                              className={cn('h-9 w-28 rounded-lg border bg-transparent px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-70', subtleButton(theme))}
-                            >
-                              {membership.role === 'owner' && <option value="owner">Owner</option>}
-                              <option value="admin">Admin</option>
-                              <option value="member">Member</option>
-                              <option value="guest">Guest</option>
-                            </select>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <select
+                                value={membership.role}
+                                disabled={membership.role === 'owner' || !canManagePeople}
+                                aria-label={`Role for ${memberName}`}
+                                onChange={async (event) => {
+                                  setRoleError('');
+                                  try { await onRoleChange(membership.id, event.target.value as WorkspaceRole); }
+                                  catch (caughtError) { setRoleError(getErrorMessage(caughtError)); }
+                                }}
+                                className={cn('h-9 w-28 rounded-lg border bg-transparent px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-70', subtleButton(theme))}
+                              >
+                                {membership.role === 'owner' && <option value="owner">Owner</option>}
+                                <option value="admin">Admin</option>
+                                <option value="member">Member</option>
+                                <option value="guest">Guest</option>
+                              </select>
+                              {canRemoveMember && (
+                                <button
+                                  type="button"
+                                  aria-label={`${removeLabel}: ${memberName}`}
+                                  title={removeLabel}
+                                  onClick={() => onRemoveMember(membership)}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] text-[#B91C1C] transition hover:bg-[#FEF2F2]"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                           {membership.role === 'admin' && (
                             <AdminAccessDetails title="Capabilities" theme={theme}>
@@ -6860,6 +6890,12 @@ async function deleteKnowledgeArticle(articleId: string) {
 async function updateMemberRole(membershipId: string, role: WorkspaceRole) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.rpc('update_member_role', { target_membership_id: membershipId, new_role: role });
+  if (error) throw error;
+}
+
+async function removeWorkspaceMember(membershipId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('remove_workspace_member', { target_membership_id: membershipId });
   if (error) throw error;
 }
 

@@ -23,6 +23,7 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 - Confirm `https://tricord.pages.dev/` loads the marketing homepage and `https://tricord.pages.dev/app` opens the application sign-in flow.
 - Confirm deep links under `/app` work after a hard refresh; the included static `404.html` fallback restores SPA routes for static hosts.
 - Confirm `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/app` redirect to Cloudflare Pages.
+- Confirm `https://tricordapp.netlify.app/` and `https://tricordapp.netlify.app/app` redirect to Cloudflare Pages.
 - After any custom DNS is active, confirm HTTPS is enforced.
 
 ### Static Build And Deploy
@@ -33,6 +34,7 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 - Confirm `dist/_redirects` exists for Cloudflare Pages SPA routing.
 - Confirm the Cloudflare Pages deployment loads the latest build after a hard refresh.
 - Confirm GitHub Actions uses `npm run build:github-redirect` for the GitHub Pages redirect artifact.
+- Confirm Netlify uses `npm run build:netlify-redirect` with `dist` as the publish directory for the Netlify redirect artifact.
 
 ### Supabase Auth
 
@@ -41,6 +43,7 @@ TriCord can be prepared for a public beta launch once the checklist below is com
   - `https://tricord.pages.dev/app`
   - `https://tricord.pages.dev/*`
   - `https://jbo11.github.io/TriCord/*` during the redirect transition.
+  - `https://tricordapp.netlify.app/*` during the redirect transition.
   - Local development URLs such as `http://localhost:3000/*`.
 - Configure production SMTP so magic links come from a branded email sender.
 - Check magic-link expiry and rate limits.

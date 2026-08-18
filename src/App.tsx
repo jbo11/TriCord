@@ -5842,7 +5842,7 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
               options: { emailRedirectTo: redirectUrl },
             });
             setSubmitting(false);
-            if (signInError) setError(signInError.message);
+            if (signInError) setError(getSignInErrorMessage(signInError));
             else setSent(true);
           }}
         >
@@ -6885,6 +6885,14 @@ async function getFunctionErrorMessage(error: unknown) {
     }
   }
   return getErrorMessage(error);
+}
+
+function getSignInErrorMessage(error: { message?: string }) {
+  const message = error.message || 'Sign-in could not be started.';
+  if (message.toLowerCase() === 'failed to fetch') {
+    return 'Could not reach Supabase Auth. Refresh the page, disable browser privacy blockers for TriCord, or try another browser. If this continues, check that the live deployment has the latest Cloudflare build and Supabase env vars.';
+  }
+  return message;
 }
 
 function getImageExtension(mimeType: string) {

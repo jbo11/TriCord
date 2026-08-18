@@ -97,3 +97,5 @@ Cloudflare Pages is the canonical production host at `https://tricord.pages.dev/
 - Production environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and any enabled integration keys.
 
 The included GitHub Actions workflow now deploys a redirect-only GitHub Pages artifact. Requests for `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/*` redirect to `https://tricord.pages.dev/` with the path, query string, and hash preserved. Configure Supabase Auth Site URL and production redirects to `https://tricord.pages.dev/app` and `https://tricord.pages.dev/*`.
+
+The included Netlify configuration is also redirect-only. Configure `https://tricordapp.netlify.app/` with `npm run build:netlify-redirect` and `dist` as the publish directory so `https://tricordapp.netlify.app/*` redirects to `https://tricord.pages.dev/*`.

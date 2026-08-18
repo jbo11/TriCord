@@ -101,7 +101,7 @@ export interface AppSpace {
   access: SpaceAccess;
   description: string | null;
   archived_at: string | null;
-  created_by: string;
+  created_by: string | null;
   email_alias?: string | null;
   email_forwarding_enabled?: boolean | null;
   created_at: string;
@@ -112,7 +112,7 @@ export interface AppPost {
   id: string;
   workspace_id: string;
   space_id: string;
-  author_id: string;
+  author_id: string | null;
   title: string;
   body: string;
   state: ContentState;
@@ -136,7 +136,7 @@ export interface AppComment {
   workspace_id: string;
   post_id: string;
   parent_comment_id: string | null;
-  author_id: string;
+  author_id: string | null;
   body: string;
   is_decision: boolean;
   created_at: string;
@@ -148,7 +148,7 @@ export interface AppAttachment {
   workspace_id: string;
   post_id: string | null;
   comment_id: string | null;
-  uploaded_by: string;
+  uploaded_by: string | null;
   bucket: string;
   object_path: string;
   filename: string;
@@ -187,7 +187,7 @@ export interface AppTask {
   priority?: TaskPriority;
   tags?: string[];
   assignee_id: string | null;
-  created_by: string;
+  created_by: string | null;
   status: TaskStatus;
   due_at: string | null;
   reminder_at?: string | null;
@@ -205,7 +205,7 @@ export interface KnowledgeArticle {
   title: string;
   summary: string | null;
   content: string;
-  created_by: string;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }

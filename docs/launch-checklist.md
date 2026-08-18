@@ -16,29 +16,31 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 
 ### Domain And Hosting
 
-- Buy and configure the production domain, for example `tricord.cc`.
-- In GoDaddy/cPanel hosting, point the domain to the hosting account and upload the built files to `public_html/`.
-- Add the correct DNS records from the host dashboard.
-- Build with `VITE_BASE_PATH=/` for the root domain.
-- Upload the contents of `dist/`, not the project source, to GoDaddy `public_html/`.
-- Confirm `https://tricord.cc/` loads the marketing homepage and `https://tricord.cc/app` opens the application sign-in flow.
+- Connect this GitHub repository to Cloudflare Pages.
+- Use `npm run build:cloudflare` as the Cloudflare Pages build command.
+- Use `dist` as the Cloudflare Pages build output directory.
+- Build with `VITE_BASE_PATH=/` for `https://tricord.pages.dev/` or any future root custom domain.
+- Confirm `https://tricord.pages.dev/` loads the marketing homepage and `https://tricord.pages.dev/app` opens the application sign-in flow.
 - Confirm deep links under `/app` work after a hard refresh; the included static `404.html` fallback restores SPA routes for static hosts.
-- After DNS is active, confirm HTTPS is enforced.
+- Confirm `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/app` redirect to Cloudflare Pages.
+- After any custom DNS is active, confirm HTTPS is enforced.
 
-### Static Build And Upload
+### Static Build And Deploy
 
 - Confirm `.env.local` contains the production Supabase URL and anon key.
-- Run `VITE_BASE_PATH=/ npm run build`.
+- Run `npm run build:cloudflare`.
 - Confirm `dist/index.html`, `dist/404.html`, and `dist/.htaccess` exist.
-- Upload everything inside `dist/` to GoDaddy `public_html/`.
-- Confirm the deployed page loads the latest build after a hard refresh.
+- Confirm `dist/_redirects` exists for Cloudflare Pages SPA routing.
+- Confirm the Cloudflare Pages deployment loads the latest build after a hard refresh.
+- Confirm GitHub Actions uses `npm run build:github-redirect` for the GitHub Pages redirect artifact.
 
 ### Supabase Auth
 
-- Set the Site URL to `https://tricord.cc/app` so magic links return to the application.
+- Set the Site URL to `https://tricord.pages.dev/app` so magic links return to the application.
 - Add redirect URLs for:
-  - `https://tricord.cc/app`
-  - `https://tricord.cc/*`
+  - `https://tricord.pages.dev/app`
+  - `https://tricord.pages.dev/*`
+  - `https://jbo11.github.io/TriCord/*` during the redirect transition.
   - Local development URLs such as `http://localhost:3000/*`.
 - Configure production SMTP so magic links come from a branded email sender.
 - Check magic-link expiry and rate limits.
@@ -68,7 +70,8 @@ TriCord can be prepared for a public beta launch once the checklist below is com
   - `SUPABASE_URL`
   - `SUPABASE_ANON_KEY`
   - `SUPABASE_SERVICE_ROLE_KEY`
-  - `APP_URL=https://tricord.cc`
+  - `APP_URL=https://tricord.pages.dev`
+  - `APP_ORIGIN=https://tricord.pages.dev`
 - Add Stripe function secrets:
   - `STRIPE_SECRET_KEY`
   - `STRIPE_WEBHOOK_SECRET`

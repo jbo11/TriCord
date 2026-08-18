@@ -90,4 +90,10 @@ npm audit
 
 Before connecting a production domain or inviting external customers, complete the checklist in [`docs/launch-checklist.md`](docs/launch-checklist.md).
 
-For GitHub Pages at `https://jbo11.github.io/TriCord/`, the included workflow builds with `VITE_BASE_PATH=/TriCord/` and deploys the `dist/` artifact automatically after pushes to `main`. Configure Supabase Auth Site URL and production redirects to `https://jbo11.github.io/TriCord/app` and `https://jbo11.github.io/TriCord/*` so magic links land in the application instead of the marketing homepage. For a future custom root-domain static host, set `VITE_BASE_PATH=/` before building and update the Supabase redirects to that domain.
+Cloudflare Pages is the canonical production host at `https://tricord.pages.dev/`. Configure Cloudflare Pages with:
+
+- Build command: `npm run build:cloudflare`
+- Build output directory: `dist`
+- Production environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and any enabled integration keys.
+
+The included GitHub Actions workflow now deploys a redirect-only GitHub Pages artifact. Requests for `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/*` redirect to `https://tricord.pages.dev/` with the path, query string, and hash preserved. Configure Supabase Auth Site URL and production redirects to `https://tricord.pages.dev/app` and `https://tricord.pages.dev/*`.

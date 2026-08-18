@@ -132,7 +132,7 @@ function oauthRedirectUri() {
 }
 
 function redirectWithStatus(query: string) {
-  const appOrigin = (Deno.env.get('APP_ORIGIN') || 'https://jbo11.github.io/TriCord').replace(/\/+$/, '');
+  const appOrigin = (Deno.env.get('APP_ORIGIN') || 'https://tricord.pages.dev').replace(/\/+$/, '');
   return Response.redirect(`${appOrigin}/app?${query}`, 302);
 }
 
@@ -141,4 +141,3 @@ function requiredEnv(name: string) {
   if (!value) throw new Error(`${name} is not configured.`);
   return value;
 }
-

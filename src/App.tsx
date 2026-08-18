@@ -1222,12 +1222,16 @@ export default function App() {
     setActiveSpaceId((current) => (current === 'all' || nextSpaces.some((space) => space.id === current) ? current : 'all'));
 
     const profileIds = new Set<string>();
-    nextPosts.forEach((post) => profileIds.add(post.author_id));
+    nextPosts.forEach((post) => {
+      if (post.author_id) profileIds.add(post.author_id);
+    });
     nextTasks.forEach((task) => {
       if (task.assignee_id) profileIds.add(task.assignee_id);
-      profileIds.add(task.created_by);
+      if (task.created_by) profileIds.add(task.created_by);
     });
-    nextKnowledgeArticles.forEach((article) => profileIds.add(article.created_by));
+    nextKnowledgeArticles.forEach((article) => {
+      if (article.created_by) profileIds.add(article.created_by);
+    });
     (membershipResult.data ?? []).forEach((membership) => profileIds.add(String(membership.user_id)));
 
     if (profileIds.size > 0) {
@@ -1439,7 +1443,7 @@ export default function App() {
     const authorIds = [...new Set([
       ...nextComments.map((comment) => comment.author_id),
       ...nextReactions.map((reaction) => reaction.user_id),
-    ])];
+    ].filter((id): id is string => Boolean(id)))];
     if (authorIds.length) {
       const nextProfiles = await fetchProfiles(authorIds);
       setProfiles((current) => ({
@@ -1959,7 +1963,7 @@ export default function App() {
                     const memberName = getProfileFullName(member, 'Hub member');
                     openConfirmDialog({
                       title: `Remove ${memberName}?`,
-                      body: `Please confirm you want to remove ${memberName} from ${selectedWorkspace?.name ?? 'this Hub'}. They will lose Hub access immediately, but existing posts, tasks, and records will stay in Hub history.`,
+                      body: `Please confirm you want to remove ${memberName} from ${selectedWorkspace?.name ?? 'this Hub'}. They will lose Hub access immediately, workspace-specific Team records will be removed, and their account email can be reused when they have no other Hub access.`,
                       confirmLabel: membership.role === 'guest' ? 'Remove guest' : 'Remove employee',
                       onConfirm: async () => {
                         await removeWorkspaceMember(membership.id);
@@ -6790,8 +6794,8 @@ async function updateMemberRole(membershipId: string, role: WorkspaceRole) {
 
 async function removeWorkspaceMember(membershipId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.rpc('remove_workspace_member', { target_membership_id: membershipId });
-  if (error) throw error;
+  const { error } = await supabase.functions.invoke('remove-workspace-member', { body: { membershipId } });
+  if (error) throw new Error(await getFunctionErrorMessage(error));
 }
 
 async function updateProfile(

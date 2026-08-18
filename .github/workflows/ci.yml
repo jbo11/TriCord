@@ -61,13 +61,8 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Build for GitHub Pages
-        run: npm run build
-        env:
-          GITHUB_PAGES: 'true'
-          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/TriCord/' }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
+      - name: Build GitHub Pages redirect
+        run: npm run build:github-redirect
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

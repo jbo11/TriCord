@@ -71,7 +71,7 @@ TriCord can be prepared for a public beta launch once the checklist below is com
   - `stripe-webhook`
 - Add shared function secrets:
   - `SUPABASE_URL`
-  - `SUPABASE_ANON_KEY`
+  - `EDGE_SUPABASE_PUBLISHABLE_KEY`
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `APP_URL=https://tricord.pages.dev`
   - `APP_ORIGIN=https://tricord.pages.dev`

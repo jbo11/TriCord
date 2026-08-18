@@ -23,9 +23,9 @@ Deno.serve(async (request) => {
     const selectedPlan: Plan = 'tricord';
 
     const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const anonKey = requiredEnv('SUPABASE_ANON_KEY');
+    const publishableKey = requiredEnv('EDGE_SUPABASE_PUBLISHABLE_KEY');
     const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
-    const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+    const userClient = createClient(supabaseUrl, publishableKey, { global: { headers: { Authorization: authorization } } });
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
     const { data: authData, error: authError } = await userClient.auth.getUser();
     if (authError || !authData.user) return json({ error: 'Authentication required.' }, 401);

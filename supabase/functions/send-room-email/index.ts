@@ -41,7 +41,7 @@ Deno.serve(async (request) => {
   if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
 
   const supabaseUrl = requiredEnv('SUPABASE_URL');
-  const anonKey = requiredEnv('SUPABASE_ANON_KEY');
+  const publishableKey = requiredEnv('EDGE_SUPABASE_PUBLISHABLE_KEY');
   const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   let auditBase: Record<string, unknown> | null = null;
@@ -62,7 +62,7 @@ Deno.serve(async (request) => {
     if (!workspaceId || !postId || !to || !body) return json({ error: 'Hub, post, recipient, and message are required.' }, 400);
     if (body.length > 10000) return json({ error: 'Email message is too long.' }, 400);
 
-    const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+    const userClient = createClient(supabaseUrl, publishableKey, { global: { headers: { Authorization: authorization } } });
     const { data: authData, error: authError } = await userClient.auth.getUser();
     if (authError || !authData.user) return json({ error: 'Authentication required.' }, 401);
 

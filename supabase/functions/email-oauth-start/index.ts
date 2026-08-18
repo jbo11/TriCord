@@ -16,8 +16,8 @@ Deno.serve(async (request) => {
     if (!authorization) return json({ error: 'Authentication required.' }, 401);
 
     const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const anonKey = requiredEnv('SUPABASE_ANON_KEY');
-    const client = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+    const publishableKey = requiredEnv('EDGE_SUPABASE_PUBLISHABLE_KEY');
+    const client = createClient(supabaseUrl, publishableKey, { global: { headers: { Authorization: authorization } } });
     const { data: authData, error: authError } = await client.auth.getUser();
     if (authError || !authData.user) return json({ error: 'Authentication required.' }, 401);
 

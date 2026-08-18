@@ -1,29 +1,27 @@
 const SPA_ROUTES = new Set(['app', 'privacy', 'terms', 'acceptable-use', 'refund', 'subprocessors', 'security', 'accessibility']);
 
-export async function onRequest(context) {
-  const url = new URL(context.request.url);
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
 
-  if (url.pathname === '/tricord-runtime-config.js') {
-    return runtimeConfigResponse(context.env);
-  }
+    if (url.pathname === '/tricord-runtime-config.js') {
+      return runtimeConfigResponse(env);
+    }
 
-  const assetResponse = await context.next();
-  if (assetResponse.status !== 404 || isStaticAsset(url.pathname)) {
-    return assetResponse;
-  }
+    const response = await env.ASSETS.fetch(request);
+    if (response.status !== 404 || isStaticAsset(url.pathname) || !shouldServeSpa(url.pathname)) {
+      return response;
+    }
 
-  if (!shouldServeSpa(url.pathname)) {
-    return assetResponse;
-  }
-
-  const indexUrl = new URL('/', url);
-  const indexRequest = new Request(indexUrl, context.request);
-  const indexResponse = await context.env.ASSETS.fetch(indexRequest);
-  return new Response(indexResponse.body, {
-    status: 200,
-    headers: indexResponse.headers,
-  });
-}
+    const indexUrl = new URL('/', url);
+    const indexRequest = new Request(indexUrl, request);
+    const indexResponse = await env.ASSETS.fetch(indexRequest);
+    return new Response(indexResponse.body, {
+      status: 200,
+      headers: indexResponse.headers,
+    });
+  },
+};
 
 function runtimeConfigResponse(env) {
   const config = {

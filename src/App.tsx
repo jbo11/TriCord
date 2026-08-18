@@ -6006,7 +6006,7 @@ function SetupScreen({ theme, setTheme }: { theme: 'light' | 'dark'; setTheme: (
       <div className="mx-auto max-w-xl text-center">
         <h1 className="text-3xl font-bold tracking-tight">Connect Supabase</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
-          Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to your environment, then restart the app.
+          Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to your environment, then restart the app.
         </p>
       </div>
     </CenteredScreen>

@@ -28,7 +28,7 @@ TriCord can be prepared for a public beta launch once the checklist below is com
 
 ### Static Build And Deploy
 
-- Confirm `.env.local` contains the production Supabase URL and anon key.
+- Confirm `.env.local` contains the production Supabase URL and publishable key.
 - Run `npm run build:cloudflare`.
 - Confirm `dist/index.html`, `dist/404.html`, and `dist/.htaccess` exist.
 - Confirm `dist/_redirects` exists for Cloudflare Pages SPA routing.

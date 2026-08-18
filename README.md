@@ -21,7 +21,7 @@ Create `.env.local`:
 
 ```bash
 VITE_SUPABASE_URL=your-project-url
-VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 # Optional. Use / for the production root domain.
 VITE_BASE_PATH=/
 ```
@@ -94,7 +94,7 @@ Cloudflare Pages is the canonical production host at `https://tricord.pages.dev/
 
 - Build command: `npm run build:cloudflare`
 - Build output directory: `dist`
-- Production environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and any enabled integration keys.
+- Production environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and any enabled integration keys.
 
 The included GitHub Actions workflow now deploys a redirect-only GitHub Pages artifact. Requests for `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/*` redirect to `https://tricord.pages.dev/` with the path, query string, and hash preserved. Configure Supabase Auth Site URL and production redirects to `https://tricord.pages.dev/app` and `https://tricord.pages.dev/*`.
 

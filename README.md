@@ -96,6 +96,8 @@ Cloudflare Pages is the canonical production host at `https://tricord.pages.dev/
 - Build output directory: `dist`
 - Production environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and any enabled integration keys.
 
+TriCord also includes a Cloudflare Pages Function that reads those same public browser variables at runtime. This keeps `/app` working even if Cloudflare does not bake Vite variables into the static JS during the build.
+
 The included GitHub Actions workflow now deploys a redirect-only GitHub Pages artifact. Requests for `https://jbo11.github.io/TriCord/` and `https://jbo11.github.io/TriCord/*` redirect to `https://tricord.pages.dev/` with the path, query string, and hash preserved. Configure Supabase Auth Site URL and production redirects to `https://tricord.pages.dev/app` and `https://tricord.pages.dev/*`.
 
 Supabase Edge Functions that create authenticated user clients expect the server-side secret `EDGE_SUPABASE_PUBLISHABLE_KEY`. Keep `SUPABASE_SERVICE_ROLE_KEY` server-side only; do not add it to any `VITE_` frontend variable.

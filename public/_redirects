@@ -1,1 +1,9 @@
-/* /index.html 200
+/app / 200
+/app/* / 200
+/privacy / 200
+/terms / 200
+/acceptable-use / 200
+/refund / 200
+/subprocessors / 200
+/security / 200
+/accessibility / 200
